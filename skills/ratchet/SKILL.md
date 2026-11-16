@@ -1,6 +1,6 @@
 ---
 name: ratchet
-description: Turn a codebase into one agents can be trusted in. Audits where agents produce slop (effects, timers, escape hatches, clock reads, cross-layer imports, stale generated files, rules that live only in prose), proposes a short plan, then turns each demonstrated mistake into a deterministic check with a per-file ratchet and a canary that proves it fires for the right reason. Re-run on the same project to verify every check still fires, tighten baselines, convert new prose rules and report before/after trends. Use when asked to harden a repo for AI agents, audit a codebase for agent anti-patterns, turn AGENTS.md or coding-standard rules into lint rules, or re-check a project ratcheted before.
+description: Turn a codebase in any language into one agents can be trusted in. Audits where agents produce slop (effects, timers, escape hatches, clock reads, cross-layer imports, stale generated files, rules that live only in prose), proposes a short plan, then turns each demonstrated mistake into a deterministic check with a per-file ratchet and a canary that proves it fires for the right reason. Re-run on the same project to verify every check still fires, tighten baselines, convert new prose rules and report before/after trends. Use when asked to harden a repo for AI agents, audit a codebase for agent anti-patterns, turn AGENTS.md or coding-standard rules into lint rules, or re-check a project ratcheted before.
 ---
 
 # ratchet
@@ -13,20 +13,32 @@ This skill runs the same loop every time on the same project. The first run sets
 
 ## 0. Foundation (new or young projects)
 
-A fresh project is the cheapest moment for strict rules: nothing to migrate, every rule at zero. The talk's examples (ban `useEffect` in product code, ban justification comments, hide nuance behind APIs) apply from day one, because the misuse they prevent is already documented across codebases; the evidence is the catalog, not this repo.
+A fresh project is the cheapest moment for strict rules: nothing to migrate, every rule at zero. The talk's examples (ban `useEffect` in product code, no comments that excuse shortcuts, hide nuance behind APIs) apply from day one, because the misuse they prevent is already documented across codebases; the evidence is the catalog, not this repo.
 
-For JS/TS projects:
+The foundation is a **contract**, not a tool list, so it works for any language and outlives any linter:
+
+- **One verify command** runs every check, the same locally and in CI.
+- **Six intents**, each covered by at least one rule with a check and a canary (or declined with a reason): `strict-compiler`, `escape-hatches`, `nuance-apis`, `dead-code`, `tests`, `no-inline-disables`.
+- **AGENTS.md** says how to run verify, in a short managed block.
 
 ```sh
-node SCRIPTS/foundation.mjs           # checklist: what is present, what is missing
-node SCRIPTS/foundation.mjs --apply   # adds what is missing; never overwrites; twice = no change
+node SCRIPTS/foundation.mjs                       # checklist against the contract; exits 1 while anything is missing
+node SCRIPTS/foundation.mjs --verify "<command>"  # record the one command that runs every check
+node SCRIPTS/foundation.mjs --apply [--app]       # tool-free parts; never overwrites; twice = no change
 ```
 
-`--apply` adds: an oxlint config with parser-based bans (`useEffect`/`$effect`/`watch` and timers outside the helpers directory, `any`, ts comments, non-null assertions), package scripts (`typecheck`, `lint`, `knip`, `test`, `ratchet`, and `verify` that runs them all), `scripts/ratchet-check.mjs` and rules with canaries in `.ratchet/state.json`, a CI workflow running `verify` (only if there is none), a short managed block in AGENTS.md, and a feature map stub for UI apps. Then do what it lists under `manual`: install the dev dependencies, set the strict tsconfig flags, run `verify` and fix the template's own violations (fix them, don't baseline them: a new project starts at zero), and run `ratchet.mjs verify` until every rule passes and every canary fires.
+`--apply` adds only what needs no tool choice: `scripts/ratchet-check.mjs`, the `no-inline-disables` rule (a probe that knows the suppression syntax of every mainstream language, at zero, or at today's counts on an existing project), the AGENTS.md block, and with `--app` a feature map stub.
 
-Then decide with the user, in one short question round, what only they know: the layers and boundaries the app will have (for example `src/domain` that never imports UI), the helpers directory name, and whether e2e tests start now or with the first screen. Turn the answers into rules the same way. Other stacks: [references/foundation.md](references/foundation.md).
+Everything else is your job, per stack, using [references/stacks.md](references/stacks.md) as a starting point:
 
-Take the first snapshot after the foundation commit; later runs are ordinary re-runs.
+1. Pick the tools for each intent. Prefer the toolchain's own (compiler flags, `cargo clippy`, `go vet`, analyzers) over third-party linters; check any third-party tool is current before adopting it, and search for its successor if not.
+2. Write each rule's config with a message that says what to do instead, then add the rule to `.ratchet/state.json` with its `intent`, `check` and a `canary` whose `expect` is the tool's own diagnostic name.
+3. Write CI that runs the verify command.
+4. Run verify and fix the template's own violations (fix them; a new project starts at zero), then `ratchet.mjs verify` until every canary fires and `foundation.mjs` exits 0.
+
+Tried on fresh Rust (clippy), Go (go vet, golangci-lint), Python (ruff, mypy, pytest) and React-TS (tsc, oxlint, knip, vitest) projects: in each, verify passes and all six canaries fire for their own diagnostic.
+
+Then ask the user, in one short round, what only they know: the layers and boundaries the app will have, the name of the helpers directory, and whether e2e tests start now or with the first screen. Turn the answers into rules the same way. Take the first snapshot after the foundation commit; later runs are ordinary re-runs.
 
 ## 1. Look
 

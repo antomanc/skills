@@ -220,25 +220,37 @@ function run(command, timeout = 900000) {
 }
 
 // A canary counts only when the check passes without it and its failure names both the canary's
-// path and the rule's diagnostic (canary.expect, by default ratchet-check's "[rule-id]"), so a build
-// that breaks for another reason, even on the canary file, is not taken as proof.
+// path and the rule's diagnostic (canary.expect, by default ratchet-check's "[rule-id]") in the same
+// block of output, so a build that breaks for another reason, even on the canary file, is not proof.
 function canary(rule, control) {
   const p = path.join(root, rule.canary.path)
   if (fs.existsSync(p)) return 'SKIPPED: canary path exists'
-  if (!fs.existsSync(path.dirname(p))) return 'SKIPPED: directory gone, update canary.path'
   const command = rule.canary.check ?? rule.check ?? 'node scripts/ratchet-check.mjs'
   const before = command === rule.check && control ? control : run(command)
   if (before.code !== 0) return 'SKIPPED: the check fails without the canary'
+  // Some stacks only compile files in certain folders (src/bin, tests); create them for the canary and remove them after.
+  const created = []
+  for (let d = path.dirname(p); !fs.existsSync(d); d = path.dirname(d)) created.unshift(d)
+  for (const d of created) fs.mkdirSync(d)
   fs.writeFileSync(p, rule.canary.content)
   try {
     const c = run(command)
     if (c.code === 0) return 'DOES NOT FIRE'
     const expect = rule.canary.expect ?? '[' + rule.id + ']'
+    // Diagnostics span several lines in many tools (rustc, ruff, mypy): the path and the rule's diagnostic
+    // must appear in the same block of consecutive non-empty lines.
     const lines = c.output.split('\n')
-    if (lines.some((l) => l.includes(rule.canary.path) && l.includes(expect))) return 'fires'
-    return 'FAILS FOR ANOTHER REASON: no output line names both ' + rule.canary.path + ' and ' + expect
+    const block = (i) => {
+      let a = i, b = i
+      while (a > 0 && lines[a - 1].trim()) a--
+      while (b < lines.length - 1 && lines[b + 1].trim()) b++
+      return lines.slice(a, b + 1)
+    }
+    if (lines.some((l, i) => l.includes(rule.canary.path) && block(i).some((x) => x.includes(expect)))) return 'fires'
+    return 'FAILS FOR ANOTHER REASON: no diagnostic names ' + expect + ' near ' + rule.canary.path
   } finally {
     fs.rmSync(p, { force: true })
+    for (const d of created.reverse()) fs.rmSync(d, { recursive: true, force: true })
   }
 }
 

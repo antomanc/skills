@@ -115,25 +115,62 @@ test('tighten only lowers, and a raise needs a reason', () => {
   assert.equal(s.rules[0].raised[0].reason, 'legacy import')
 })
 
-for (const ui of ['react', 'svelte', 'vue', null]) {
-  test('foundation --apply is idempotent (' + (ui ?? 'node') + ')', () => {
-    const dir = repo({ 'package.json': { name: 'x', dependencies: ui ? { [ui]: '*' } : {}, devDependencies: { typescript: '*' } }, 'src/main.ts': 'export {}\n' })
+test('a multi-line diagnostic counts when the rule is named anywhere in its block', () => {
+  const rustc = 'printf "error: used unwrap() on an Option value\\n --> src/c.rs:3:20\\n  |\\n3 | x.unwrap()\\n  = help: see #unwrap_used\\n\\nerror: could not compile\\n"; exit 1'
+  const dir = repo({ 'src/a.rs': 'x\n', ...state([{ id: 'no-unwrap', message: 'm', check: 'test ! -e src/c.rs || { ' + rustc + '; }', canary: { path: 'src/c.rs', content: 'x', expect: 'unwrap_used' } }]) })
+  assert.equal(run(dir, RATCHET, 'verify').json.rules[0].canary, 'fires')
+})
+
+test('a diagnostic in another block does not count', () => {
+  const out = 'printf "src/c.rs:1: syntax error\\n\\nother.rs: unwrap_used\\n"; exit 1'
+  const dir = repo({ 'src/a.rs': 'x\n', ...state([{ id: 'no-unwrap', message: 'm', check: 'test ! -e src/c.rs || { ' + out + '; }', canary: { path: 'src/c.rs', content: 'x', expect: 'unwrap_used' } }]) })
+  assert.match(run(dir, RATCHET, 'verify').json.rules[0].canary, /FAILS FOR ANOTHER REASON/)
+})
+
+test('a canary in a folder that does not exist yet gets it, and the folder is removed after', () => {
+  const dir = repo({ 'src/a.ts': 'x\n', ...state([clockRule({ path: 'src/bin/deep/c.ts', content: 'Date.now()\n' })]) })
+  assert.equal(run(dir, RATCHET, 'verify').json.rules[0].canary, 'fires')
+  assert.equal(fs.existsSync(path.join(dir, 'src/bin')), false)
+})
+
+const INTENTS = ['strict-compiler', 'escape-hatches', 'nuance-apis', 'dead-code', 'tests', 'no-inline-disables']
+
+for (const [stack, files] of [['rust', { 'Cargo.toml': '[package]\nname = "x"\n', 'src/main.rs': 'fn main() {}\n' }], ['go', { 'go.mod': 'module x\n', 'main.go': 'package main\n' }], ['js/ts', { 'package.json': '{"name":"x"}' }], ['swift', { 'Package.swift': '// swift-tools-version:6.0\n' }]]) {
+  test('foundation on a new ' + stack + ' project: contract missing, then --apply is idempotent and tool-free', () => {
+    const dir = repo(files)
+    const before = run(dir, FOUNDATION)
+    assert.equal(before.code, 1)
+    assert.deepEqual(before.json.stacks, [stack])
+    assert.deepEqual(INTENTS.filter((i) => before.json.intents[i].status === 'missing'), INTENTS)
+    run(dir, FOUNDATION, '--verify', 'make check')
     const first = run(dir, FOUNDATION, '--apply')
-    assert.equal(first.code, 0)
-    assert.ok(first.json.changed.includes('.oxlintrc.json'))
-    const second = run(dir, FOUNDATION, '--apply')
-    assert.deepEqual(second.json.changed, [])
-    const s = JSON.parse(fs.readFileSync(path.join(dir, '.ratchet/state.json'), 'utf8'))
-    assert.equal(s.rules.some((r) => r.id === 'effects-in-helpers'), ui !== null)
-    for (const r of s.rules) assert.ok(r.canary && (r.check || r.probe), r.id + ' must be complete')
+    assert.ok(first.json.changed.includes('scripts/ratchet-check.mjs'))
+    assert.equal(first.json.intents['no-inline-disables'].status, 'covered')
+    assert.deepEqual(run(dir, FOUNDATION, '--apply').json.changed, [])
+    assert.ok(!fs.existsSync(path.join(dir, '.oxlintrc.json')), 'no tool-specific config is written')
+    assert.match(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8'), /make check/)
   })
 }
 
-test('foundation never overwrites an existing linter config or workflow', () => {
-  const dir = repo({ 'package.json': { name: 'x', dependencies: { react: '*' } }, 'eslint.config.js': 'export default []\n', '.github/workflows/ci.yml': 'name: mine\n' })
-  const r = run(dir, FOUNDATION, '--apply')
-  assert.equal(fs.readFileSync(path.join(dir, 'eslint.config.js'), 'utf8'), 'export default []\n')
-  assert.equal(fs.readFileSync(path.join(dir, '.github/workflows/ci.yml'), 'utf8'), 'name: mine\n')
-  assert.ok(r.json.manual.some((m) => m.includes('add the bans')))
-  assert.ok(r.json.manual.some((m) => m.includes('CI exists')))
+test('the no-inline-disables probe knows every language and keeps existing suppressions as a ceiling', () => {
+  const dir = repo({ 'a.rs': '#[allow(dead_code)]\n', 'b.go': '//nolint\n', 'c.swift': '// swiftlint:disable force_cast\n', 'd.kt': '@Suppress("X")\n', 'e.py': 'x = 1  # noqa\n', 'f.ts': '// @ts-ignore\n', 'g.cs': '#pragma warning disable CS1\n', 'h.dart': '// ignore: x\n', 'README.md': '// nolint in docs is fine\n' })
+  run(dir, FOUNDATION, '--apply')
+  const s = JSON.parse(fs.readFileSync(path.join(dir, '.ratchet/state.json'), 'utf8'))
+  assert.equal(Object.keys(s.rules[0].baseline).length, 8)
+  assert.equal(run(dir, CHECK).code, 0)
+  write(dir, 'i.rb', '# rubocop:disable Style/X\n')
+  assert.equal(run(dir, CHECK).code, 1)
+})
+
+test('the contract holds when every intent is covered or declined, verify is recorded and CI runs it', () => {
+  const rule = (intent) => ({ id: intent, intent, check: 'true', canary: { path: 'c-' + intent, content: 'x' } })
+  const dir = repo({
+    '.ratchet/state.json': { version: 1, verify: 'make check', rules: ['strict-compiler', 'escape-hatches', 'nuance-apis', 'tests', 'no-inline-disables'].map(rule), declined: [{ intent: 'dead-code', reason: 'the compiler already rejects unused code' }], history: [] },
+    '.github/workflows/ci.yml': 'jobs:\n  v:\n    steps:\n      - run: make check\n',
+    'AGENTS.md': '<!-- ratchet:start -->\n<!-- ratchet:end -->\n'
+  })
+  const r = run(dir, FOUNDATION)
+  assert.equal(r.code, 0, r.out)
+  assert.equal(r.json.intents['dead-code'].status, 'declined')
+  assert.equal(r.json.ci, 'runs verify')
 })

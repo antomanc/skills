@@ -10,7 +10,7 @@ npx skills add antomanc/skills --skill ratchet
 
 Makes a codebase one agents can be trusted in. It finds where agents produce slop (effects, timers, escape hatches, clock reads, cross-layer imports, rules that live only in prose), proposes a short plan, and turns each accepted item into a deterministic check: a lint rule, an architecture test, or a probe with a per-file ratchet, each with a canary that proves it fires for its own reason.
 
-On a new project it starts with a foundation (`scripts/foundation.mjs`): a parser-based linter with the bans the talk recommends (effects and timers outside named helpers, `any`, ts comments, non-null assertions), strict TypeScript, one `verify` command and CI, all with canaries.
+On a new project, in any language, it starts with a foundation: a contract (`scripts/foundation.mjs`) of one verify command run in CI and six kinds of guardrail (strict compiler, escape hatches, nuance APIs such as effects and timers, dead code, tests, no inline suppressions), each a rule with a canary. The script checks the contract without knowing any tool; the agent picks the stack's current tools for each part (`references/stacks.md` has examples for Rust, Go, Python, TS, Kotlin, Swift, .NET, Dart), and the canaries prove the choice works.
 
 Run it again on the same project at any time. It checks that every guardrail still fires, lowers baselines as old occurrences go away, picks up new prose rules, and reports before/after trends once there is enough history. On an unchanged project a re-run changes nothing.
 

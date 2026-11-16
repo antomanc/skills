@@ -1,177 +1,131 @@
 #!/usr/bin/env node
-// foundation: the deterministic guardrails a JS/TS project should have from day one.
-//   node foundation.mjs           checklist of what is present and what is missing (JSON)
-//   node foundation.mjs --apply   add what is missing and safe to add; never overwrites a file it did not create.
-// Applying twice changes nothing the second time.
+// foundation: the guardrail contract every project should meet, whatever its language or tools.
+//
+// The contract, checked here without knowing any tool:
+//   - one verify command runs every check (state.verify), and CI runs it;
+//   - every intent below is covered by at least one rule with a check and a canary, or declined with a reason;
+//   - AGENTS.md says how to run verify.
+// Which linter or compiler flag covers an intent is the agent's choice for the stack (references/stacks.md),
+// proven by the canary, so the contract outlives any particular tool.
+//
+//   node foundation.mjs                         checklist (JSON)
+//   node foundation.mjs --verify "<command>"    record the project's verify command
+//   node foundation.mjs --apply [--app]         add the tool-free parts; never overwrites; twice = no change
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { repoRoot, listFiles, loadState, statePath } from './ratchet-check.mjs'
+import { repoRoot, listFiles, loadState, statePath, matchProbe } from './ratchet-check.mjs'
 
 const root = repoRoot()
-const apply = process.argv.includes('--apply')
+const argv = process.argv.slice(2)
+const flagValue = (name) => { const i = argv.indexOf('--' + name); return i === -1 ? null : argv[i + 1] }
 const here = path.dirname(fileURLToPath(import.meta.url))
 const read = (f) => { try { return fs.readFileSync(path.join(root, f), 'utf8') } catch { return null } }
 const exists = (f) => fs.existsSync(path.join(root, f))
-const changed = []
-const manual = []
-const code = (s) => '\x60' + s + '\x60'
+const bt = (s) => '\x60' + s + '\x60'
 
-function writeNew(f, content) {
-  if (exists(f)) return false
-  fs.mkdirSync(path.dirname(path.join(root, f)), { recursive: true })
-  fs.writeFileSync(path.join(root, f), content)
-  changed.push(f)
-  return true
+export const INTENTS = {
+  'strict-compiler': 'The strictest compiler or type-checker settings the stack has, warnings as errors.',
+  'escape-hatches': 'No way around the type system inline: any/unknown casts, force unwraps (!, !!, unwrap, try!), unchecked casts, unsafe without review.',
+  'nuance-apis': 'APIs agents misuse are banned outside named helpers: effects, timers and sleeps, raw threads or goroutines, direct clock reads where time matters.',
+  'dead-code': 'Unused code, exports and dependencies fail the build.',
+  'tests': 'A test command that runs in verify; a failing test fails verify.',
+  'no-inline-disables': 'Comments that silence a check are a rule of their own at zero.'
 }
 
-const pkgText = read('package.json')
-if (!pkgText) {
-  console.log(JSON.stringify({ error: 'foundation covers JS/TS projects with a package.json; for other stacks follow references/foundation.md' }, null, 1))
-  process.exit(1)
-}
-const pkg = JSON.parse(pkgText)
-const deps = { ...pkg.dependencies, ...pkg.devDependencies }
+// Every suppression syntax we know, across languages. Text, not syntax: it has to work before any linter exists.
+export const DISABLE_PATTERN = [
+  '(eslint|oxlint)-disable', 'biome-ignore', 'svelte-ignore', '@ts-(ignore|expect-error|nocheck)', 'deno-lint-ignore',
+  '#!?\\[allow\\(', '//\\s*nolint', 'swiftlint:disable', '@Suppress(Warnings)?\\(', 'ktlint-disable',
+  '#\\s*noqa', '#\\s*type:\\s*ignore', '#\\s*pyright:\\s*ignore', 'rubocop:disable', '#pragma warning disable',
+  'SuppressMessage\\(', 'NOSONAR', '//\\s*ignore(_for_file)?:', 'checkstyle:off', 'NOLINT', 'phpcs:ignore', 'shellcheck disable'
+].join('|')
+const DISABLE_EXCLUDE = ['**/node_modules/**', '**/vendor/**', '**/target/**', '**/build/**', '**/dist/**', '**/.gradle/**', '.git/**', '.agents/**', '.claude/**', '.codex/**', '.cursor/**', '.ratchet/**', '**/*.md', '**/*.lock', '**/*-lock.*', '**/*.lockb', 'scripts/ratchet-check.mjs']
+
+const MANIFESTS = [
+  ['js/ts', /(^|\/)package\.json$/], ['rust', /(^|\/)Cargo\.toml$/], ['go', /(^|\/)go\.mod$/], ['python', /(^|\/)(pyproject\.toml|requirements\.txt|setup\.py)$/],
+  ['kotlin/java (gradle)', /(^|\/)(build\.gradle(\.kts)?|settings\.gradle(\.kts)?)$/], ['java (maven)', /(^|\/)pom\.xml$/], ['swift', /(^|\/)Package\.swift$|\.xcodeproj\//],
+  ['dart/flutter', /(^|\/)pubspec\.yaml$/], ['c#/.net', /\.(csproj|sln)$/], ['ruby', /(^|\/)Gemfile$/], ['php', /(^|\/)composer\.json$/], ['elixir', /(^|\/)mix\.exs$/],
+  ['c/c++', /(^|\/)(CMakeLists\.txt|meson\.build|Makefile)$/], ['zig', /(^|\/)build\.zig$/]
+]
+
 const files = listFiles(root)
-const pm = exists('pnpm-lock.yaml') ? 'pnpm' : exists('bun.lock') || exists('bun.lockb') ? 'bun' : exists('yarn.lock') ? 'yarn' : 'npm'
-const run = (s) => (pm === 'npm' ? 'npm run ' + s : pm + ' ' + s)
-const ui = deps.react ? 'react' : deps.svelte ? 'svelte' : deps.vue ? 'vue' : null
-const helpers = { react: 'src/lib/hooks', svelte: 'src/lib/reactive', vue: 'src/composables' }[ui] ?? 'src/lib'
-const ts = files.some((f) => /\.(ts|tsx)$/.test(f)) || !!deps.typescript
-
-// Linter config (oxlint): parser-based bans whose messages say what to do instead.
-function oxlintConfig() {
-  const effectMsg = 'Effects live only in ' + helpers + ' as helpers named for what they do; derive the value or handle the event instead.'
-  const timerMsg = 'Wait for the event itself (a promise, transitionend, an observer), or use a named helper from ' + helpers + '.'
-  const timers = ['setTimeout', 'setInterval', 'requestAnimationFrame', 'requestIdleCallback']
-  const rules = {
-    'typescript/no-explicit-any': 'error',
-    'typescript/ban-ts-comment': ['error', { 'ts-expect-error': true, 'ts-ignore': true, 'ts-nocheck': true }],
-    'typescript/no-non-null-assertion': 'error',
-    'import/no-unassigned-import': ['error', { allow: ['**/*.css', '**/*.scss'] }],
-    'no-shadow': 'off',
-    'no-restricted-globals': ['error', ...timers.map((name) => ({ name, message: timerMsg }))],
-    'no-restricted-properties': ['error', ...timers.map((property) => ({ object: 'window', property, message: timerMsg }))]
-  }
-  if (ui === 'react') {
-    rules['react/react-in-jsx-scope'] = 'off'
-    rules['no-restricted-imports'] = ['error', { paths: [{ name: 'react', importNames: ['useEffect', 'useLayoutEffect'], message: effectMsg }] }]
-    rules['no-restricted-properties'].push({ object: 'React', property: 'useEffect', message: effectMsg }, { object: 'React', property: 'useLayoutEffect', message: effectMsg })
-  }
-  if (ui === 'svelte') rules['no-restricted-globals'].push({ name: '$effect', message: effectMsg })
-  if (ui === 'vue') rules['no-restricted-imports'] = ['error', { paths: [{ name: 'vue', importNames: ['watch', 'watchEffect'], message: effectMsg }] }]
-  return {
-    $schema: './node_modules/oxlint/configuration_schema.json',
-    plugins: ['typescript', 'import', 'unicorn', 'oxc', ...(ui === 'react' ? ['react', 'react-hooks', 'jsx-a11y'] : [])],
-    categories: { correctness: 'error', suspicious: 'error' },
-    rules,
-    overrides: [{ files: [helpers + '/**'], rules: { 'no-restricted-globals': 'off', 'no-restricted-properties': 'off', 'no-restricted-imports': 'off' } }]
-  }
+const stacks = [...new Set(MANIFESTS.filter(([, re]) => files.some((f) => re.test(f) && !/node_modules\//.test(f))).map(([s]) => s))]
+let state = loadState(root) ?? { version: 1, rules: [], declined: [], history: [] }
+const changed = []
+const save = () => {
+  fs.mkdirSync(path.dirname(statePath(root)), { recursive: true })
+  const next = JSON.stringify(state, null, 2) + '\n'
+  if (read('.ratchet/state.json') !== next) { fs.writeFileSync(statePath(root), next); if (!changed.includes('.ratchet/state.json')) changed.push('.ratchet/state.json') }
 }
 
-const linter = files.find((f) => /(^|\/)(\.oxlintrc\.json|eslint\.config\.\w+|\.eslintrc(\.\w+)?|biome\.jsonc?)$/.test(f))
-const tsText = files.filter((f) => /(^|\/)tsconfig[\w.]*\.json$/.test(f)).map(read).join('\n')
-const missingFlags = ts ? ['strict', 'noUncheckedIndexedAccess', 'noImplicitOverride', 'noFallthroughCasesInSwitch'].filter((flag) => !new RegExp('"' + flag + '"\\s*:\\s*true').test(tsText)) : []
-const typecheck = pkg.scripts?.typecheck ?? (ui === 'svelte' && /svelte-check/.test(pkg.scripts?.check ?? '') ? pkg.scripts.check : ts ? 'tsc -b' : null)
-const wantScripts = {
-  ...(typecheck ? { typecheck } : {}),
-  lint: 'oxlint',
-  knip: 'knip',
-  test: deps.jest ? 'jest --passWithNoTests' : 'vitest run --passWithNoTests',
-  ratchet: 'node scripts/ratchet-check.mjs'
-}
-const verifySteps = Object.keys(wantScripts).map(run)
-const workflows = files.filter((f) => /^\.github\/workflows\/.+\.ya?ml$/.test(f))
-const ciText = workflows.map(read).join('\n')
-const agentsFile = exists('AGENTS.md') ? 'AGENTS.md' : exists('CLAUDE.md') ? 'CLAUDE.md' : 'AGENTS.md'
-const needDeps = ['oxlint', 'knip', ...(deps.jest ? [] : ['vitest'])].filter((d) => !deps[d])
+const verifyArg = flagValue('verify')
+if (verifyArg) { state.verify = verifyArg; save() }
 
-const checklist = {
-  stack: { pm, ui, ts, helpers },
-  linter: linter ?? 'missing',
-  typescriptFlagsMissing: missingFlags,
-  scriptsMissing: Object.keys(wantScripts).filter((k) => !pkg.scripts?.[k]).concat(pkg.scripts?.verify ? [] : ['verify']),
-  devDependenciesMissing: needDeps,
-  ci: workflows.length ? (/\bverify\b/.test(ciText) ? 'runs verify' : 'present, does not run verify') : 'missing',
-  ratchet: exists('scripts/ratchet-check.mjs') && loadState(root) ? 'present' : 'missing',
-  agentsBlock: /<!-- ratchet:start -->/.test(read(agentsFile) ?? '') ? 'present' : 'missing',
-  featureMap: exists('docs/agents/feature-map.md') ? 'present' : ui ? 'missing' : 'not needed',
-  e2e: ui ? (deps['@playwright/test'] ? 'playwright' : 'missing: add Playwright once the first screen exists') : 'not needed'
-}
-
-if (apply) {
-  if (!linter) writeNew('.oxlintrc.json', JSON.stringify(oxlintConfig(), null, 2) + '\n')
-  else if (!/no-restricted-globals/.test(read(linter) ?? '')) manual.push(linter + ' exists: add the bans from references/foundation.md to it')
-
-  const scripts = { ...(pkg.scripts ?? {}) }
-  for (const [k, v] of Object.entries(wantScripts)) if (!scripts[k]) scripts[k] = v
-  if (!scripts.verify) scripts.verify = verifySteps.join(' && ')
-  if (JSON.stringify(scripts) !== JSON.stringify(pkg.scripts ?? {})) {
-    pkg.scripts = scripts
-    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify(pkg, null, 2) + '\n')
-    changed.push('package.json')
-  }
-
+if (argv.includes('--apply')) {
   if (!exists('scripts/ratchet-check.mjs')) {
     fs.mkdirSync(path.join(root, 'scripts'), { recursive: true })
     fs.copyFileSync(path.join(here, 'ratchet-check.mjs'), path.join(root, 'scripts/ratchet-check.mjs'))
     changed.push('scripts/ratchet-check.mjs')
   }
-  const state = loadState(root) ?? { version: 1, rules: [], declined: [], history: [] }
-  const lint = run('lint')
-  const dir = fs.existsSync(path.join(root, 'src')) ? 'src/' : ''
-  const rules = [
-    { id: 'escape-hatches', kind: 'pattern', message: 'Fix the type instead of any, ts comments or non-null assertions.', enforcedBy: 'oxlint typescript rules', check: lint, canary: { path: dir + 'ratchet-canary-any.ts', content: 'export const ratchetCanary: any = 1\n', expect: 'no-explicit-any' } },
-    { id: 'timers-in-helpers', kind: 'api', message: 'Timers live in named helpers in ' + helpers + '.', enforcedBy: 'oxlint no-restricted-globals', check: lint, canary: { path: dir + 'ratchet-canary-timer.ts', content: 'export const ratchetCanary = () => setTimeout(() => {}, 1)\n', expect: 'no-restricted-globals' } },
-    { id: 'no-lint-disables', kind: 'pattern', message: 'Fix the cause instead of disabling the rule; if the rule is wrong for this code, change its config in review.', enforcedBy: 'ratchet-check probe', check: 'node scripts/ratchet-check.mjs', probe: { pattern: '(eslint|oxlint)-disable|biome-ignore|svelte-ignore', include: ['src/**'] }, baseline: {}, canary: { path: dir + 'ratchet-canary-disable.ts', content: '// oxlint-disable\nexport const ratchetCanary = 1\n' } }
-  ]
-  if (ui === 'react') rules.push({ id: 'effects-in-helpers', kind: 'api', message: 'useEffect lives only in ' + helpers + ' as hooks named for what they do.', enforcedBy: 'oxlint no-restricted-imports', check: lint, canary: { path: dir + 'RatchetCanary.tsx', content: "import { useEffect } from 'react'\nexport const ratchetCanary = useEffect\n", expect: 'no-restricted-imports' } })
-  if (ui === 'svelte') rules.push({ id: 'effects-in-helpers', kind: 'api', message: '$effect lives only in ' + helpers + ' as helpers named for what they do.', enforcedBy: 'oxlint no-restricted-globals', check: lint, canary: { path: dir + 'ratchet-canary-effect.svelte.ts', content: 'export function ratchetCanary() {\n  $effect(() => {})\n}\n', expect: '$effect' } })
-  if (ui === 'vue') rules.push({ id: 'effects-in-helpers', kind: 'api', message: 'watch and watchEffect live only in ' + helpers + '.', enforcedBy: 'oxlint no-restricted-imports', check: lint, canary: { path: dir + 'ratchet-canary-watch.ts', content: "import { watch } from 'vue'\nexport const ratchetCanary = watch\n", expect: 'no-restricted-imports' } })
-  const date = new Date().toISOString().slice(0, 10)
-  let added = 0
-  for (const r of rules) if (!state.rules.some((x) => x.id === r.id)) { state.rules.push({ ...r, source: 'ratchet foundation', added: date }); added++ }
-  if (added) {
-    fs.mkdirSync(path.dirname(statePath(root)), { recursive: true })
-    fs.writeFileSync(statePath(root), JSON.stringify(state, null, 2) + '\n')
-    changed.push('.ratchet/state.json')
+  if (!state.rules.some((r) => r.id === 'no-inline-disables')) {
+    const probe = { pattern: DISABLE_PATTERN, include: ['**'], exclude: DISABLE_EXCLUDE }
+    const baseline = Object.fromEntries(Object.entries(matchProbe(root, files, probe)).map(([f, l]) => [f, l.length]))
+    state.rules.push({
+      id: 'no-inline-disables', intent: 'no-inline-disables', kind: 'pattern',
+      message: 'Fix the cause instead of silencing the check; if a rule is wrong for this code, change its config in review.',
+      source: 'ratchet foundation', enforcedBy: 'ratchet-check probe', check: 'node scripts/ratchet-check.mjs', probe, baseline,
+      canary: { path: 'ratchet-canary-disable.txt', content: 'nolint: // nolint\n', expect: '[no-inline-disables]' },
+      added: new Date().toISOString().slice(0, 10)
+    })
   }
-
-  const install = pm === 'pnpm' ? 'pnpm install --frozen-lockfile' : pm === 'npm' ? 'npm ci' : pm === 'yarn' ? 'yarn install --immutable' : 'bun install --frozen-lockfile'
-  if (!workflows.length) {
-    writeNew('.github/workflows/ci.yml', [
-      'name: CI', '', 'on:', '  push:', '    branches: [main]', '  pull_request:', '', 'jobs:', '  verify:', '    runs-on: ubuntu-latest', '    steps:',
-      '      - uses: actions/checkout@v5',
-      ...(pm === 'pnpm' ? ['      - uses: pnpm/action-setup@v4'] : pm === 'bun' ? ['      - uses: oven-sh/setup-bun@v2'] : []),
-      '      - uses: actions/setup-node@v5', '        with:', '          node-version: 24', ...(pm === 'bun' ? [] : ['          cache: ' + pm]),
-      '      - run: ' + install,
-      '      - run: ' + run('verify'), ''
-    ].join('\n'))
-  } else if (!/\bverify\b/.test(ciText)) manual.push('CI exists: add a step running ' + run('verify'))
-
-  const block = [
-    '<!-- ratchet:start -->',
-    '## Checks',
-    '- ' + code(run('verify')) + ' runs every check (typecheck, lint, unused code, tests, ratchet). Run it before calling work done; CI runs the same.',
-    '- A lint error says what to do instead. Fix the cause: disabling a rule, ' + code('any') + ', ts comments and non-null assertions are errors themselves.',
-    ...(ui ? ['- Effects and timers live only in ' + code(helpers) + ', as helpers named for what they do.'] : []),
-    ...(ui ? ['- ' + code('docs/agents/feature-map.md') + ' names every screen and control with the code behind it; keep it current.'] : []),
-    '- A mistake corrected twice becomes a check in ' + code('.ratchet/state.json') + ', not a new line here.',
-    '<!-- ratchet:end -->'
-  ].join('\n')
-  const agents = read(agentsFile)
-  if (agents == null) writeNew(agentsFile, '# ' + (pkg.name ?? path.basename(root)) + '\n\n' + block + '\n')
-  else if (!agents.includes('<!-- ratchet:start -->')) { fs.writeFileSync(path.join(root, agentsFile), agents.trimEnd() + '\n\n' + block + '\n'); changed.push(agentsFile) }
-  else {
-    const next = agents.replace(/<!-- ratchet:start -->[\s\S]*?<!-- ratchet:end -->/, block)
+  save()
+  if (state.verify) {
+    const agentsFile = exists('AGENTS.md') ? 'AGENTS.md' : exists('CLAUDE.md') ? 'CLAUDE.md' : 'AGENTS.md'
+    const block = [
+      '<!-- ratchet:start -->',
+      '## Checks',
+      '- ' + bt(state.verify) + ' runs every check. Run it before calling work done; CI runs the same command.',
+      '- A failing check says what to do instead. Fix the cause: comments that silence a check fail the build themselves.',
+      '- A mistake corrected twice becomes a check in ' + bt('.ratchet/state.json') + ', not a new line here.',
+      ...(exists('docs/agents/feature-map.md') || argv.includes('--app') ? ['- ' + bt('docs/agents/feature-map.md') + ' names every screen and control with the code behind it; keep it current.'] : []),
+      '<!-- ratchet:end -->'
+    ].join('\n')
+    const agents = read(agentsFile)
+    const next = agents == null ? '# ' + path.basename(root) + '\n\n' + block + '\n'
+      : agents.includes('<!-- ratchet:start -->') ? agents.replace(/<!-- ratchet:start -->[\s\S]*?<!-- ratchet:end -->/, block)
+      : agents.trimEnd() + '\n\n' + block + '\n'
     if (next !== agents) { fs.writeFileSync(path.join(root, agentsFile), next); changed.push(agentsFile) }
   }
-
-  if (ui) writeNew('docs/agents/feature-map.md', '# Feature map\n\nWhat a user sees, with the names to use for it and the code behind it. A new screen, control or dialog gets a row in the same change.\n\n| Name | What it is | How to reach it | Code |\n| --- | --- | --- | --- |\n')
-  if (needDeps.length) manual.push('install: ' + (pm === 'npm' ? 'npm install -D ' : pm === 'yarn' ? 'yarn add -D ' : pm + ' add -D ') + needDeps.join(' '))
-  if (missingFlags.length) manual.push('tsconfig: set ' + missingFlags.map((f) => '"' + f + '": true').join(', ') + ' in the app tsconfig')
-  manual.push('run ' + run('verify') + ' and fix what it reports in the existing code')
-  manual.push('node <skill>/scripts/ratchet.mjs verify: every rule must pass and every canary fire')
+  if (argv.includes('--app') && !exists('docs/agents/feature-map.md')) {
+    fs.mkdirSync(path.join(root, 'docs/agents'), { recursive: true })
+    fs.writeFileSync(path.join(root, 'docs/agents/feature-map.md'), '# Feature map\n\nWhat a user sees, with the names to use for it and the code behind it. A new screen, control or dialog gets a row in the same change.\n\n| Name | What it is | How to reach it | Code |\n| --- | --- | --- | --- |\n')
+    changed.push('docs/agents/feature-map.md')
+  }
 }
 
-console.log(JSON.stringify(apply ? { changed, manual } : checklist, null, 1))
+// Checklist
+const workflows = files.filter((f) => /^\.github\/workflows\/.+\.ya?ml$|^\.gitlab-ci\.yml$|^\.circleci\/config\.yml$|^azure-pipelines\.yml$|^bitbucket-pipelines\.yml$/.test(f))
+const ciText = workflows.map(read).join('\n')
+const declined = new Map((state.declined ?? []).filter((d) => d.intent).map((d) => [d.intent, d.reason]))
+const complete = (r) => (r.check || r.probe) && r.canary
+const intents = {}
+for (const [id, what] of Object.entries(INTENTS)) {
+  const rules = state.rules.filter((r) => r.intent === id)
+  intents[id] = declined.has(id) ? { status: 'declined', reason: declined.get(id) }
+    : rules.some(complete) ? { status: 'covered', rules: rules.map((r) => r.id) }
+    : { status: 'missing', what }
+}
+const verifyNames = state.verify ? [state.verify, ...state.verify.split(/\s*&&\s*/)] : []
+const result = {
+  stacks,
+  verify: state.verify ?? 'missing: pick the one command that runs every check, then --verify "<command>"',
+  ci: !workflows.length ? 'missing' : state.verify && verifyNames.some((v) => ciText.includes(v)) ? 'runs verify' : 'present, does not run verify',
+  agentsBlock: /<!-- ratchet:start -->/.test((read('AGENTS.md') ?? '') + (read('CLAUDE.md') ?? '')) ? 'present' : 'missing',
+  intents,
+  incompleteRules: state.rules.filter((r) => !complete(r)).map((r) => r.id),
+  next: 'for each missing intent, add a rule with the stack\'s current tools (references/stacks.md), give it an intent and a canary, then run ratchet.mjs verify'
+}
+const missing = Object.values(intents).some((i) => i.status === 'missing') || !state.verify || result.ci !== 'runs verify' || result.incompleteRules.length
+if (missing && !argv.includes('--apply') && !verifyArg) process.exitCode = 1
+console.log(JSON.stringify(argv.includes('--apply') || verifyArg ? { changed, ...result } : result, null, 1))
