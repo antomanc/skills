@@ -256,8 +256,9 @@ function snapshot() {
   const last = state.history?.at(-1)
   if (last && last.commit !== h) {
     try {
-      const changed = git(['diff', '--name-only', last.commit, 'HEAD']).split('\n').filter((f) => f && !f.startsWith('.ratchet/'))
-      const dirty = git(['status', '--porcelain']).split('\n').filter((l) => l && !l.slice(3).startsWith('.ratchet/'))
+      const counts = (f) => f && SOURCE_EXT.test(f) && !isSkipped(f)
+      const changed = git(['diff', '--name-only', last.commit, 'HEAD']).split('\n').filter(counts)
+      const dirty = git(['status', '--porcelain']).split('\n').map((l) => l.slice(3)).filter(counts)
       if (!changed.length && !dirty.length) return { unchanged: true, since: last.commit }
     } catch {}
   }
