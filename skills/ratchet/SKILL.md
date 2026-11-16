@@ -81,9 +81,10 @@ Put every finding in exactly one bucket:
 
 1. Pick the sanctioned path for this project: an existing helper, an established library, or a small helper you write now. Use what you know, the docs, or the web; the skill doesn't ship replacements, because the right one depends on the stack and the project.
 2. Make it carry real lifecycle behaviour and test it: cleanup on unmount, dependency changes, stale answers, errors, separate instances. A helper that exists but leaks is worse than none.
-3. Give the rule an **allow canary**: an ordinary, correct use through that path, which must pass the check and verify. It is the proof that the restriction leaves the right way open. `verify` fails an `api` rule without one.
-4. Keep the helpers' home open: new purpose-named helpers there are ordinary work, guarded by their own tests and review, not by a count ceiling.
-5. Give each layer an explicit job instead of accidental exemptions (the data layer does I/O, it doesn't export timers), and check that boundary.
+3. Give the rule an **allow canary**: an ordinary, correct use through that path, which must pass the check and verify. It is the proof that the restriction leaves the right way open. Boundary rules need one too (a component importing a *type* from the data layer is legitimate even when importing its functions is not). `verify` fails an `api` or `boundary` rule without one.
+4. Keep the helpers' home open: new purpose-named helpers there are ordinary work, guarded by their own tests and review, not by a count ceiling. Make the tests a check, not a hope: a rule that every helper file has a test beside it, so lifecycle bugs (a timer left running after unmount) are caught where they live.
+5. Treat every exemption as a hole and close it: if a file may use the restricted thing (a fake server's latency timer), add a canary that tries to smuggle it out through that file (an exported `sleep` used elsewhere) and must fail, or check that the exempt file exports nothing but its own job.
+6. Give each layer an explicit job instead of accidental exemptions (the data layer does I/O, it doesn't export timers), and check that boundary.
 
 If you can't build a path that makes the correct implementation easy, don't restrict: decline the area with that reason, or keep it to review.
 

@@ -337,8 +337,8 @@ function verify() {
     if (rule.allow && !flag('no-checks')) {
       r.allow = allowCanary(rule, control, aggregate)
       if (r.allow !== 'passes') ok = false
-    } else if (rule.kind === 'api' && rule.check) {
-      r.allow = 'MISSING: an api rule needs an allow canary, a correct use through the sanctioned helper that must pass'
+    } else if ((rule.kind === 'api' || rule.kind === 'boundary') && rule.check) {
+      r.allow = 'MISSING: an ' + rule.kind + ' rule needs an allow canary, an ordinary correct use (through the sanctioned helper, or across the boundary the legitimate way) that must pass'
       ok = false
     }
     results.push(r)

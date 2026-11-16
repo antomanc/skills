@@ -240,3 +240,8 @@ test('--against fails on weakened enforcement unless the commit declares it', ()
   assert.equal(r.code, 1)
   assert.match(r.out, /protected file changed: \.oxlintrc\.json/)
 })
+
+test('a boundary rule without an allow canary is incomplete', () => {
+  const dir = repo({ 'src/a.ts': 'x\n', ...state([{ ...clockRule({ path: 'src/c.ts', content: 'Date.now()\n' }), kind: 'boundary' }]) })
+  assert.match(run(dir, RATCHET, 'verify').json.rules[0].allow, /MISSING: an boundary rule|MISSING: a/)
+})
