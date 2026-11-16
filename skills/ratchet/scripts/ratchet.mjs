@@ -270,6 +270,32 @@ function canary(rule, control, aggregate) {
   }
 }
 
+// The opposite of a canary: a correct, ordinary use through the path the rule sanctions must pass both the
+// rule's check and verify. A rule that blocks the correct path pushes agents into workarounds.
+function allowCanary(rule, control, aggregate) {
+  const p = path.join(root, rule.allow.path)
+  if (fs.existsSync(p)) return 'SKIPPED: allow path exists'
+  const command = rule.allow.check ?? rule.check
+  const before = control ?? run(command)
+  if (before.code !== 0) return 'SKIPPED: the check fails without the allow canary'
+  const created = []
+  for (let d = path.dirname(p); !fs.existsSync(d); d = path.dirname(d)) created.unshift(d)
+  for (const d of created) fs.mkdirSync(d)
+  fs.writeFileSync(p, rule.allow.content)
+  try {
+    const c = run(command)
+    if (c.code !== 0) return 'BLOCKS THE SANCTIONED PATH: ' + c.tail.split('\n').filter(Boolean).slice(-2).join(' | ')
+    if (aggregate) {
+      const v = run(aggregate)
+      if (v.code !== 0) return 'BLOCKS THE SANCTIONED PATH through verify: ' + v.tail.split('\n').filter(Boolean).slice(-2).join(' | ')
+    }
+    return 'passes'
+  } finally {
+    fs.rmSync(p, { force: true })
+    for (const d of created.reverse()) fs.rmSync(d, { recursive: true, force: true })
+  }
+}
+
 function verify() {
   const state = loadState(root)
   if (!state) {
@@ -307,6 +333,13 @@ function verify() {
     if (rule.canary && !flag('no-checks')) {
       r.canary = canary(rule, control, aggregate)
       if (!r.canary.startsWith('fires')) ok = false
+    }
+    if (rule.allow && !flag('no-checks')) {
+      r.allow = allowCanary(rule, control, aggregate)
+      if (r.allow !== 'passes') ok = false
+    } else if (rule.kind === 'api' && rule.check) {
+      r.allow = 'MISSING: an api rule needs an allow canary, a correct use through the sanctioned helper that must pass'
+      ok = false
     }
     results.push(r)
   }

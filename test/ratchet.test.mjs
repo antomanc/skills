@@ -205,3 +205,38 @@ test('a canary whose expected text is in its own source is not proof', () => {
   assert.match(r.json.rules[0].canary, /INVALID CANARY/)
   assert.equal(r.code, 1)
 })
+
+test('an allow canary must pass: a rule that blocks the sanctioned path fails verify', () => {
+  const rule = (allowContent) => ({ id: 'clock', kind: 'api', message: 'use now() from src/time.ts', check: 'node ' + CHECK, probe: { pattern: 'Date\\.now\\(', include: ['src/**'], exclude: ['src/time.ts'] }, canary: { path: 'src/c.ts', content: 'Date.now()\n' }, allow: { path: 'src/ok.ts', content: allowContent } })
+  const good = repo({ 'src/time.ts': 'export const now = () => Date.now()\n', ...state([rule("import { now } from './time'\nexport const t = now()\n")]) })
+  assert.equal(run(good, RATCHET, 'verify').json.rules[0].allow, 'passes')
+  const blocked = repo({ 'src/time.ts': 'export const now = () => Date.now()\n', ...state([rule('export const t = Date.now()\n')]) })
+  const r = run(blocked, RATCHET, 'verify')
+  assert.match(r.json.rules[0].allow, /BLOCKS THE SANCTIONED PATH/)
+  assert.equal(r.code, 1)
+})
+
+test('an api rule without an allow canary is incomplete', () => {
+  const dir = repo({ 'src/a.ts': 'x\n', ...state([{ ...clockRule({ path: 'src/c.ts', content: 'Date.now()\n' }), kind: 'api' }]) })
+  const r = run(dir, RATCHET, 'verify')
+  assert.match(r.json.rules[0].allow, /MISSING/)
+  assert.equal(r.code, 1)
+})
+
+test('--against fails on weakened enforcement unless the commit declares it', () => {
+  const dir = repo({ 'src/a.ts': 'Date.now()\n', '.oxlintrc.json': '{}\n', '.ratchet/state.json': { version: 1, rules: [clockRule({ path: 'src/c.ts', content: 'Date.now()\n' })], protected: ['.oxlintrc.json'], history: [] } })
+  run(dir, RATCHET, 'baseline', 'clock'); commit(dir, 'baseline')
+  git(dir, 'tag', 'main')
+  write(dir, 'src/b.ts', 'Date.now()\n')
+  run(dir, RATCHET, 'baseline', 'clock', '--raise', '--reason', 'x'); commit(dir, 'raise')
+  let r = run(dir, CHECK, '--against', 'main')
+  assert.equal(r.code, 1)
+  assert.match(r.out, /ceiling raised for src\/b\.ts/)
+  git(dir, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'Allow the clock in b\n\nRatchet-Change: b.ts is the clock module now')
+  r = run(dir, CHECK, '--against', 'main')
+  assert.equal(r.code, 0, r.out)
+  write(dir, '.oxlintrc.json', '{"rules":{}}\n'); commit(dir, 'loosen lint')
+  r = run(dir, CHECK, '--against', 'main')
+  assert.equal(r.code, 1)
+  assert.match(r.out, /protected file changed: \.oxlintrc\.json/)
+})

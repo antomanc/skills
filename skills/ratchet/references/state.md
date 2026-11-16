@@ -44,6 +44,8 @@ Fields:
 - `probe` (optional): regex over lines, with globs. Present when ratchet-check enforces the rule, and also useful for native-tool rules so `measure` can track the count. Patterns are JS regex source; escape backslashes for JSON.
 - `baseline`: per-file ceiling on occurrences. Only `baseline <id>` sets it, only `tighten` lowers it. Missing file = 0 allowed. A file can swap one occurrence for another under its ceiling; this is a ratchet on counts, not proof that no new code matches.
 - `raised`: every `baseline <id> --raise --reason` with its date and totals. These are the rule's false positives and deliberate exceptions.
+- `allow` (required for `kind: "api"`): a file with an ordinary, correct use through the sanctioned helper; it must pass `check` and, with `--aggregate`, verify. It proves the restriction leaves the right way open.
+- `protected` (top level): config files whose changes `ratchet-check --against <ref>` reports as enforcement changes (linter configs, the CI workflow).
 - `canary`: a file that must make `check` (or `canary.check`) fail, with output that names the canary (its path, or `canary.expect`). The check must pass without it. Its directory must exist; its path must not.
 - `declined`: findings decided against, with `reason` and `revisitWhen`. Re-runs skip them until `revisitWhen` happens or the user asks.
 - `history`: one snapshot per commit; the first is the before-snapshot (`phase: "before"` when taken with `--before`), and `report` compares it with now.
