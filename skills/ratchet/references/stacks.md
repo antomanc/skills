@@ -1,17 +1,21 @@
 # Tools per stack (examples, checked 2026-11)
 
-The skill doesn't depend on any of these. They are a starting point for mapping each intent of the contract (`scripts/foundation.mjs`) to the stack in front of you. Before using one:
+The skill doesn't depend on any of these. They are a starting point for deciding each assessment area of the contract (`scripts/foundation.mjs`) on the stack in front of you, and they are defaults to propose with a reason, not rules every project must adopt.
 
-1. **Prefer the toolchain's own tools** (compiler flags, `cargo clippy`, `go vet`, `dotnet` analyzers, `swift build -warnings-as-errors`). They outlive third-party linters.
-2. **Check the tool is current**: a release in the last few months, not deprecated in favour of a successor. If this page is stale, search for the stack's current mainstream linter and use that.
-3. **Prove it with a canary.** A rule counts only when `ratchet.mjs verify` shows its canary failing for the rule's own diagnostic. That is what makes the choice safe, whatever the tool.
+Choosing a tool:
+
+1. **Prefer what the toolchain ships** (compiler flags, `cargo clippy`, `go vet`, .NET analyzers, `swift build -warnings-as-errors`).
+2. **Judge a third-party tool** on compatibility with the project, maintenance status, whether it can express the rule, and whether its version can be pinned. A stable tool with infrequent releases is fine. Look for a replacement when there is an actual compatibility or maintenance problem.
+3. **Prove it with a canary.** A rule counts only when `ratchet.mjs verify --aggregate` shows its canary failing with the rule's own diagnostic, through its check and through the verify command.
+
+Exceptions: prefer the form the tool can report as unused once the code is fixed (Rust `#[expect(lint, reason = "...")]`, TypeScript `@ts-expect-error` with a description, ESLint `reportUnusedDisableDirectives`), scoped to one line or item rather than moved into shared config, where the exception would cover more than it should.
 
 If no linter can express a rule, a `ratchet-check` probe can (a regex over lines, with per-file ceilings). It is weaker, so prefer a parser where one exists.
 
 ## Rust
 | Intent | Example |
 | --- | --- |
-| strict-compiler | `[lints.rust] warnings = "deny"`, `unsafe_code = "forbid"` in Cargo.toml; `cargo clippy --all-targets -- -D warnings` |
+| compiler | `[lints.rust] warnings = "deny"`, `unsafe_code = "forbid"` in Cargo.toml; `cargo clippy --all-targets -- -D warnings` |
 | escape-hatches | `[lints.clippy] unwrap_used = "deny"`, `expect_used = "deny"`, `panic = "deny"` (allow in tests via `clippy.toml` `allow-unwrap-in-tests = true`) |
 | nuance-apis | `clippy.toml` `disallowed-methods` with a `reason`: `std::thread::sleep`, `std::time::SystemTime::now`, `std::thread::spawn` outside one module |
 | dead-code | `dead_code` and `unused` are warnings, so `-D warnings` covers them; `cargo machete` for unused dependencies |
@@ -21,7 +25,7 @@ Canaries go in `tests/` or `examples/` (compiled by `--all-targets`); a stray fi
 ## Go
 | Intent | Example |
 | --- | --- |
-| strict-compiler | `go vet ./...`; the compiler already rejects unused imports and variables |
+| compiler | `go vet ./...`; the compiler already rejects unused imports and variables |
 | escape-hatches | golangci-lint `forcetypeassert`, `errcheck`; ban `any`/`interface{}` in exported APIs with `forbidigo` if wanted |
 | nuance-apis | golangci-lint `forbidigo` patterns with `msg`: `^time\.Sleep$`, `^time\.Now$` (outside a clock package via exclusion rules), bare `go` statements via `gochecknoglobals`/review |
 | dead-code | golangci-lint `unused` |
@@ -30,7 +34,7 @@ Canaries go in `tests/` or `examples/` (compiled by `--all-targets`); a stray fi
 ## Python
 | Intent | Example |
 | --- | --- |
-| strict-compiler | `mypy --strict` or `pyright` strict |
+| compiler | `mypy --strict` or `pyright` strict |
 | escape-hatches | ruff `ANN401` (no `Any`), `PGH003` (blanket type ignores) |
 | nuance-apis | ruff `flake8-tidy-imports.banned-api` with `msg`: `time.sleep`, `datetime.datetime.now`, `threading.Thread` |
 | dead-code | ruff `F401`, `F841`; `vulture` for unused functions |
@@ -39,7 +43,7 @@ Canaries go in `tests/` or `examples/` (compiled by `--all-targets`); a stray fi
 ## TypeScript / JavaScript
 | Intent | Example |
 | --- | --- |
-| strict-compiler | tsconfig `strict`, `noUncheckedIndexedAccess`, `noImplicitOverride`, `noFallthroughCasesInSwitch` |
+| compiler | tsconfig `strict`, `noUncheckedIndexedAccess`, `noImplicitOverride`, `noFallthroughCasesInSwitch` |
 | escape-hatches | oxlint or typescript-eslint: `no-explicit-any`, `ban-ts-comment` (all forms), `no-non-null-assertion` |
 | nuance-apis | `no-restricted-imports` (React `useEffect`/`useLayoutEffect`, Vue `watch`), `no-restricted-globals` (`setTimeout`, Svelte `$effect`), `no-restricted-properties` (`React.useEffect`, `window.setTimeout`), each with a message; an `overrides` entry for the helpers directory |
 | dead-code | knip |
@@ -67,7 +71,7 @@ oxlint parses TS, JSX, Svelte and Vue script blocks with no config. A working ox
 ## Kotlin / Android
 | Intent | Example |
 | --- | --- |
-| strict-compiler | `allWarningsAsErrors = true` in the Kotlin compiler options; Android lint `warningsAsErrors` |
+| compiler | `allWarningsAsErrors = true` in the Kotlin compiler options; Android lint `warningsAsErrors` |
 | escape-hatches | detekt `UnsafeCallOnNullableType` (`!!`), `UnsafeCast` |
 | nuance-apis | detekt `ForbiddenMethodCall` (`java.time.Instant.now`, `java.lang.Thread.sleep`), `ForbiddenImport` (`kotlinx.coroutines.GlobalScope`), each with a `reason`; Compose effects via a convention script or Konsist test |
 | dead-code | detekt `UnusedPrivateMember`, `UnusedImports`; Android lint `UnusedResources` |
@@ -77,7 +81,7 @@ Module boundaries: check the declared Gradle graph, both `projects.x.y` and `pro
 ## Swift
 | Intent | Example |
 | --- | --- |
-| strict-compiler | `-warnings-as-errors`, Swift 6 strict concurrency (`swiftLanguageModes: [.v6]`) |
+| compiler | `-warnings-as-errors`, Swift 6 strict concurrency (`swiftLanguageModes: [.v6]`) |
 | escape-hatches | SwiftLint `force_unwrapping`, `force_cast`, `force_try` (opt-in rules) |
 | nuance-apis | SwiftLint `custom_rules` (regex) for `DispatchQueue.main.asyncAfter`, `Thread.sleep`, `Date()` outside a clock type |
 | dead-code | Periphery |

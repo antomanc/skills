@@ -5,6 +5,7 @@
 //   snapshot             measure + git metrics, saved in .ratchet/state.json history (one entry per commit)
 //   snapshot --before <commit>  measure the project as it was before the changes, kept as the first snapshot
 //   verify [--no-checks] run each rule's check, prove each canary fails for its own reason; exits 1 on any failure
+//   verify --aggregate   also prove the recorded verify command fails on each canary (it really runs every rule)
 //   tighten              lower every rule's per-file baseline to today's counts (never raises)
 //   baseline <rule-id>   set a new rule's baseline to today's counts
 //   report               before/after: probes since the first snapshot, git metrics in equal windows around it
@@ -222,7 +223,20 @@ function run(command, timeout = 900000) {
 // A canary counts only when the check passes without it and its failure names both the canary's
 // path and the rule's diagnostic (canary.expect, by default ratchet-check's "[rule-id]") in the same
 // block of output, so a build that breaks for another reason, even on the canary file, is not proof.
-function canary(rule, control) {
+// Diagnostics span several lines in many tools (rustc, ruff, mypy): the canary's path and the rule's
+// diagnostic must appear in the same block of consecutive non-empty lines.
+function names(output, file, expect) {
+  const lines = output.split('\n')
+  const block = (i) => {
+    let a = i, b = i
+    while (a > 0 && lines[a - 1].trim()) a--
+    while (b < lines.length - 1 && lines[b + 1].trim()) b++
+    return lines.slice(a, b + 1)
+  }
+  return lines.some((l, i) => l.includes(file) && block(i).some((x) => x.includes(expect)))
+}
+
+function canary(rule, control, aggregate) {
   const p = path.join(root, rule.canary.path)
   if (fs.existsSync(p)) return 'SKIPPED: canary path exists'
   const command = rule.canary.check ?? rule.check ?? 'node scripts/ratchet-check.mjs'
@@ -237,17 +251,17 @@ function canary(rule, control) {
     const c = run(command)
     if (c.code === 0) return 'DOES NOT FIRE'
     const expect = rule.canary.expect ?? '[' + rule.id + ']'
-    // Diagnostics span several lines in many tools (rustc, ruff, mypy): the path and the rule's diagnostic
-    // must appear in the same block of consecutive non-empty lines.
-    const lines = c.output.split('\n')
-    const block = (i) => {
-      let a = i, b = i
-      while (a > 0 && lines[a - 1].trim()) a--
-      while (b < lines.length - 1 && lines[b + 1].trim()) b++
-      return lines.slice(a, b + 1)
+    if (!names(c.output, rule.canary.path, expect)) return 'FAILS FOR ANOTHER REASON: no diagnostic names ' + expect + ' near ' + rule.canary.path
+    // With --aggregate the project's one verify command must fail on the canary too, or verify does not run this rule.
+    if (aggregate) {
+      const v = run(aggregate)
+      if (v.code === 0) return 'VERIFY DOES NOT RUN IT: ' + aggregate + ' passed with the canary in place'
+      // An earlier step of verify may catch the canary first (a && b stops at a): the code is still blocked,
+      // but this run cannot show that the rule's own check is part of verify.
+      if (!names(v.output, rule.canary.path, expect)) return 'fires; verify blocks it, but an earlier check fails first, so this does not show verify runs the rule'
+      return 'fires, also through verify'
     }
-    if (lines.some((l, i) => l.includes(rule.canary.path) && block(i).some((x) => x.includes(expect)))) return 'fires'
-    return 'FAILS FOR ANOTHER REASON: no diagnostic names ' + expect + ' near ' + rule.canary.path
+    return 'fires'
   } finally {
     fs.rmSync(p, { force: true })
     for (const d of created.reverse()) fs.rmSync(d, { recursive: true, force: true })
@@ -265,6 +279,14 @@ function verify() {
   const results = []
   const checked = new Map()
   let ok = true
+  // --aggregate: prove the project's one verify command runs each rule, not only the rule's own check.
+  let aggregate = null
+  if (flag('aggregate')) {
+    if (!state.verify) { process.exitCode = 1; return { error: 'no verify command recorded: node foundation.mjs --verify "<command>"' } }
+    const base = run(state.verify)
+    if (base.code !== 0) { process.exitCode = 1; return { error: 'verify fails without any canary; fix that first', output: base.tail } }
+    aggregate = state.verify
+  }
   for (const rule of state.rules ?? []) {
     const r = { id: rule.id }
     if (!rule.check && !rule.probe) { r.incomplete = 'no check and no probe: nothing enforces this rule'; ok = false }
@@ -281,8 +303,8 @@ function verify() {
       if (control.code) { r.checkOutput = control.tail; ok = false }
     }
     if (rule.canary && !flag('no-checks')) {
-      r.canary = canary(rule, control)
-      if (r.canary !== 'fires') ok = false
+      r.canary = canary(rule, control, aggregate)
+      if (!r.canary.startsWith('fires')) ok = false
     }
     results.push(r)
   }

@@ -133,7 +133,7 @@ test('a canary in a folder that does not exist yet gets it, and the folder is re
   assert.equal(fs.existsSync(path.join(dir, 'src/bin')), false)
 })
 
-const INTENTS = ['strict-compiler', 'escape-hatches', 'nuance-apis', 'dead-code', 'tests', 'no-inline-disables']
+const INTENTS = ['compiler', 'escape-hatches', 'nuance-apis', 'dead-code', 'tests', 'suppressions']
 
 for (const [stack, files] of [['rust', { 'Cargo.toml': '[package]\nname = "x"\n', 'src/main.rs': 'fn main() {}\n' }], ['go', { 'go.mod': 'module x\n', 'main.go': 'package main\n' }], ['js/ts', { 'package.json': '{"name":"x"}' }], ['swift', { 'Package.swift': '// swift-tools-version:6.0\n' }]]) {
   test('foundation on a new ' + stack + ' project: contract missing, then --apply is idempotent and tool-free', () => {
@@ -141,36 +141,60 @@ for (const [stack, files] of [['rust', { 'Cargo.toml': '[package]\nname = "x"\n'
     const before = run(dir, FOUNDATION)
     assert.equal(before.code, 1)
     assert.deepEqual(before.json.stacks, [stack])
-    assert.deepEqual(INTENTS.filter((i) => before.json.intents[i].status === 'missing'), INTENTS)
+    assert.deepEqual(INTENTS.filter((i) => before.json.intents[i].status === 'undecided'), INTENTS)
     run(dir, FOUNDATION, '--verify', 'make check')
     const first = run(dir, FOUNDATION, '--apply')
     assert.ok(first.json.changed.includes('scripts/ratchet-check.mjs'))
-    assert.equal(first.json.intents['no-inline-disables'].status, 'covered')
+    assert.equal(first.json.intents['suppressions'].status, 'covered')
     assert.deepEqual(run(dir, FOUNDATION, '--apply').json.changed, [])
     assert.ok(!fs.existsSync(path.join(dir, '.oxlintrc.json')), 'no tool-specific config is written')
     assert.match(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8'), /make check/)
   })
 }
 
-test('the no-inline-disables probe knows every language and keeps existing suppressions as a ceiling', () => {
+test('suppressions without a reason fail in every language; explained ones pass; old ones are a ceiling', () => {
   const dir = repo({ 'a.rs': '#[allow(dead_code)]\n', 'b.go': '//nolint\n', 'c.swift': '// swiftlint:disable force_cast\n', 'd.kt': '@Suppress("X")\n', 'e.py': 'x = 1  # noqa\n', 'f.ts': '// @ts-ignore\n', 'g.cs': '#pragma warning disable CS1\n', 'h.dart': '// ignore: x\n', 'README.md': '// nolint in docs is fine\n' })
   run(dir, FOUNDATION, '--apply')
   const s = JSON.parse(fs.readFileSync(path.join(dir, '.ratchet/state.json'), 'utf8'))
   assert.equal(Object.keys(s.rules[0].baseline).length, 8)
   assert.equal(run(dir, CHECK).code, 0)
-  write(dir, 'i.rb', '# rubocop:disable Style/X\n')
-  assert.equal(run(dir, CHECK).code, 1)
+  write(dir, 'i.rs', '#[expect(dead_code, reason = "kept for the FFI table")]\nfn f() {}\n')
+  write(dir, 'j.go', 'x() //nolint:errcheck // flushed in Close\n')
+  write(dir, 'k.ts', '// @ts-expect-error -- upstream types miss the overload\n')
+  assert.equal(run(dir, CHECK).code, 0, 'explained exceptions pass')
+  write(dir, 'l.rs', '#[expect(dead_code)]\n')
+  assert.equal(run(dir, CHECK).code, 1, 'an unexplained expect fails')
 })
 
-test('the contract holds when every intent is covered or declined, verify is recorded and CI runs it', () => {
+test('the contract holds when every area is decided, verify is recorded, CI runs the exact command and AGENTS.md says so', () => {
   const rule = (intent) => ({ id: intent, intent, check: 'true', canary: { path: 'c-' + intent, content: 'x' } })
-  const dir = repo({
-    '.ratchet/state.json': { version: 1, verify: 'make check', rules: ['strict-compiler', 'escape-hatches', 'nuance-apis', 'tests', 'no-inline-disables'].map(rule), declined: [{ intent: 'dead-code', reason: 'the compiler already rejects unused code' }], history: [] },
-    '.github/workflows/ci.yml': 'jobs:\n  v:\n    steps:\n      - run: make check\n',
+  const files = {
+    '.ratchet/state.json': { version: 1, verify: 'make lint && make test', rules: ['compiler', 'escape-hatches', 'nuance-apis', 'tests', 'suppressions'].map(rule), declined: [{ intent: 'dead-code', reason: 'the compiler already rejects unused code' }], history: [] },
+    '.github/workflows/ci.yml': 'jobs:\n  v:\n    steps:\n      - run: make lint &&   make test\n',
     'AGENTS.md': '<!-- ratchet:start -->\n<!-- ratchet:end -->\n'
-  })
+  }
+  const dir = repo(files)
   const r = run(dir, FOUNDATION)
   assert.equal(r.code, 0, r.out)
   assert.equal(r.json.intents['dead-code'].status, 'declined')
-  assert.equal(r.json.ci, 'runs verify')
+  write(dir, '.github/workflows/ci.yml', 'jobs:\n  v:\n    steps:\n      - run: make lint\n')
+  const partial = run(dir, FOUNDATION)
+  assert.equal(partial.code, 1, 'CI running part of verify is not enough')
+  assert.match(partial.json.ci, /does not run the exact verify command/)
+  write(dir, '.github/workflows/ci.yml', files['.github/workflows/ci.yml'])
+  fs.rmSync(path.join(dir, 'AGENTS.md'))
+  assert.equal(run(dir, FOUNDATION).code, 1, 'a missing AGENTS block fails the contract')
+})
+
+test('verify --aggregate proves the verify command runs each rule', () => {
+  const dir = repo({ 'src/a.ts': 'x\n', 'Makefile': 'check:\n\tnode ' + CHECK + '\nskip:\n\ttrue\n', ...state([clockRule({ path: 'src/c.ts', content: 'Date.now()\n' })]) })
+  const set = (verify) => { const s = JSON.parse(fs.readFileSync(path.join(dir, '.ratchet/state.json'), 'utf8')); s.verify = verify; fs.writeFileSync(path.join(dir, '.ratchet/state.json'), JSON.stringify(s)) }
+  set('make -s check')
+  let r = run(dir, RATCHET, 'verify', '--aggregate')
+  assert.equal(r.json.rules[0].canary, 'fires, also through verify')
+  assert.equal(r.code, 0)
+  set('make -s skip')
+  r = run(dir, RATCHET, 'verify', '--aggregate')
+  assert.match(r.json.rules[0].canary, /VERIFY DOES NOT RUN IT/)
+  assert.equal(r.code, 1)
 })

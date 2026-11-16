@@ -13,32 +13,30 @@ This skill runs the same loop every time on the same project. The first run sets
 
 ## 0. Foundation (new or young projects)
 
-A fresh project is the cheapest moment for strict rules: nothing to migrate, every rule at zero. The talk's examples (ban `useEffect` in product code, no comments that excuse shortcuts, hide nuance behind APIs) apply from day one, because the misuse they prevent is already documented across codebases; the evidence is the catalog, not this repo.
+A fresh project is the cheapest moment to decide its guardrails: nothing to migrate, so whatever is adopted starts at zero. What to adopt is still a decision for this project, not a universal law: the talk's examples (ban `useEffect` in product code, hide nuance behind APIs) are strong defaults for some stacks and wrong for others.
 
-The foundation is a **contract**, not a tool list, so it works for any language and outlives any linter:
+The foundation is a **verification contract**, checked without knowing any tool:
 
-- **One verify command** runs every check, the same locally and in CI.
-- **Six intents**, each covered by at least one rule with a check and a canary (or declined with a reason): `strict-compiler`, `escape-hatches`, `nuance-apis`, `dead-code`, `tests`, `no-inline-disables`.
+- **One verify command** runs every check, and CI runs that exact command.
+- **Six assessment areas**, each with a decision: rules (each with a check and a canary), or a declined entry with the reason. `compiler` (strictness, warnings), `escape-hatches` (any, forced unwraps and casts, unsafe), `nuance-apis` (effects, timers, threads, clock reads), `dead-code`, `tests`, `suppressions` (how exceptions are written).
 - **AGENTS.md** says how to run verify, in a short managed block.
 
 ```sh
-node SCRIPTS/foundation.mjs                       # checklist against the contract; exits 1 while anything is missing
+node SCRIPTS/foundation.mjs                       # where the project stands; exits 1 while anything is undecided
 node SCRIPTS/foundation.mjs --verify "<command>"  # record the one command that runs every check
 node SCRIPTS/foundation.mjs --apply [--app]       # tool-free parts; never overwrites; twice = no change
 ```
 
-`--apply` adds only what needs no tool choice: `scripts/ratchet-check.mjs`, the `no-inline-disables` rule (a probe that knows the suppression syntax of every mainstream language, at zero, or at today's counts on an existing project), the AGENTS.md block, and with `--app` a feature map stub.
+`--apply` adds only what needs no tool choice: `scripts/ratchet-check.mjs`, an `explained-suppressions` rule (an exception must name its rule and give a reason on the same line, in any language's syntax; existing ones become a ceiling), the AGENTS.md block, and with `--app` a feature map stub. `--no-suppression-rule` skips that rule when the project decides otherwise.
 
-Everything else is your job, per stack, using [references/stacks.md](references/stacks.md) as a starting point:
+Then, for each area:
 
-1. Pick the tools for each intent. Prefer the toolchain's own (compiler flags, `cargo clippy`, `go vet`, analyzers) over third-party linters; check any third-party tool is current before adopting it, and search for its successor if not.
-2. Write each rule's config with a message that says what to do instead, then add the rule to `.ratchet/state.json` with its `intent`, `check` and a `canary` whose `expect` is the tool's own diagnostic name.
-3. Write CI that runs the verify command.
-4. Run verify and fix the template's own violations (fix them; a new project starts at zero), then `ratchet.mjs verify` until every canary fires and `foundation.mjs` exits 0.
+1. **Propose a default with its reason**, from what the stack and the app need: a UI app with a reactive framework gets effects restricted to named helpers; a CLI probably doesn't need a timer rule; a Rust library may allow `unwrap` in tests and forbid it elsewhere. Ask the user in one short round, together with what only they know: the layers and boundaries the app will have, and when e2e tests start.
+2. **Pick the tool**: prefer what the toolchain ships (compiler flags, `cargo clippy`, `go vet`, analyzers), then the stack's mainstream linter. Judge a tool on compatibility with this project, maintenance status, whether it can express the rule, and whether its version can be pinned, not on how recent its last release is. Look for a replacement when there is an actual compatibility or maintenance problem. [references/stacks.md](references/stacks.md) has dated examples per stack.
+3. **Write the rule** with a message that says what to do instead, add it to `.ratchet/state.json` with its `intent`, `check` and a `canary` whose `expect` is the tool's own diagnostic. Record a declined area as `{ "intent": "...", "reason": "...", "revisitWhen": "..." }` in `declined`.
+4. **Wire and prove**: CI runs the exact verify command; fix the template's own violations; then `ratchet.mjs verify --aggregate`, which proves each canary fails both its own check and the verify command (so verify really runs every rule), and `foundation.mjs` exits 0.
 
-Tried on fresh Rust (clippy), Go (go vet, golangci-lint), Python (ruff, mypy, pytest) and React-TS (tsc, oxlint, knip, vitest) projects: in each, verify passes and all six canaries fire for their own diagnostic.
-
-Then ask the user, in one short round, what only they know: the layers and boundaries the app will have, the name of the helpers directory, and whether e2e tests start now or with the first screen. Turn the answers into rules the same way. Take the first snapshot after the foundation commit; later runs are ordinary re-runs.
+The same contract is worth checking on an existing project during its first run: areas without a decision are candidates for the plan.
 
 ## 1. Look
 
@@ -51,7 +49,7 @@ node SCRIPTS/ratchet.mjs measure     # probe counts and top files, comment ratio
 
 **Decide the mode from the inventory, before anything writes state:** `inventory` reports `state: null` on a first run.
 
-- **New or young project** (just bootstrapped, or little code and no recurring fixes yet): go to section 0 first. There is no history to find misuse in, so it installs the guardrails whose need is already established everywhere (catalog), at zero tolerance while that is free.
+- **New or young project** (just bootstrapped, or little code and no recurring fixes yet): go to section 0 first. There is no history to find misuse in yet, so decide the guardrails with the user from what the stack and the app need, while anything adopted can start at zero.
 - **First run on an existing project**: take the before-snapshot now, before any change: `node SCRIPTS/ratchet.mjs snapshot`. (If changes were made already, `snapshot --before <commit>` measures the project as it was at that commit.) Without it the report can't show what the first changes did.
 - **Re-run**: `.ratchet/state.json` exists: also run `node SCRIPTS/ratchet.mjs verify` (add `--no-checks` only if the user wants it fast; checks can take minutes) and `node SCRIPTS/ratchet.mjs report`, then go to section 5 before planning anything new.
 
@@ -108,11 +106,11 @@ Rules for the plan:
 For each item, in order, as its own commit:
 
 1. **Fix the root cause first where it is cheap.** Write the API, move the code, then ban the raw form. If cleaning every old occurrence is too big, ratchet instead (step 3).
-2. **Enforce it with the project's own tools first**, in this order: types or module structure (it cannot be written) → a parser-based linter or architecture test (oxlint/eslint, detekt, Konsist, dependency-cruiser, the resolved Gradle module graph) → the project's existing convention script → a probe in `.ratchet/state.json` checked by `ratchet-check`. A project with no linter gets one when a rule needs it: oxlint parses TS, JSX, Svelte and Vue script blocks with no config, and its `no-restricted-imports`, `no-restricted-globals` and `no-restricted-properties` carry most bans with a message. Use regex probes for what no linter sees, or as the per-file ceiling over legacy files while the linter blocks new ones. A check that parses one syntax must cover the others that mean the same thing (both `projects.x` and `project(":x")` in Gradle), with a canary for each. Error messages say what to do instead and why, in one sentence: they are the prompt the next agent reads. "Read time through rememberWeatherTime(); a composable that reads the clock cannot be tested at midnight" — not "Forbidden call".
+2. **Enforce it with the project's own tools first**, in this order: types or module structure (it cannot be written) → a parser-based linter or architecture test (the stack's own, or its mainstream one: references/stacks.md) → the project's existing convention script → a probe in `.ratchet/state.json` checked by `ratchet-check`. A project with no linter gets one when a rule needs it (references/stacks.md lists options per stack). Use regex probes for what no linter sees, or as the per-file ceiling over legacy files while the linter blocks new ones. A check that parses one syntax must cover the others that mean the same thing (both `projects.x` and `project(":x")` in Gradle), with a canary for each. Error messages say what to do instead and why, in one sentence: they are the prompt the next agent reads. "Read time through rememberWeatherTime(); a composable that reads the clock cannot be tested at midnight" — not "Forbidden call".
 3. **Ratchet what you can't clean now.** Add the rule to `.ratchet/state.json` (schema in [references/state.md](references/state.md)) with a `probe`, then `node SCRIPTS/ratchet.mjs baseline <id>`. Each file gets a ceiling: as many occurrences as it has today, never more. Be honest about what that is: a file can still swap an old occurrence for a new one, and a regex sees text, not syntax. Where that matters, move the rule to a parser-based tool. The first time a project gets a probe rule, copy `SCRIPTS/ratchet-check.mjs` to `scripts/ratchet-check.mjs` and add `node scripts/ratchet-check.mjs` to CI next to the other checks.
 4. **Add a canary**: a minimal file that breaks the rule, in `rule.canary`. `verify` runs the check without it (it must pass), writes it, runs the check again and counts it only when the failure names the canary (its path, or `canary.expect` when the check reports something else), then deletes it. A canary that breaks the build for another reason is reported as such, not as proof.
 5. **Shorten the prose it replaces, keep the why.** Delete procedure the check now carries; keep one line of rationale, or a link to the ADR, when the check enforces only part of the original intent or a future maintainer would ask why the constraint exists. Keep one line in AGENTS.md (or the standards file) when an agent needs to know the API exists: "Time comes from rememberWeatherTime()". Never add rules about the rule.
-6. Run the project's checks and tests, and `node SCRIPTS/ratchet.mjs verify`. It exits 1 unless every rule shows `check: pass`, `canary: fires` and no violations.
+6. Run the project's checks and tests, and `node SCRIPTS/ratchet.mjs verify --aggregate`. It exits 1 unless every rule's check passes, every canary fails its own check and the verify command with the rule's diagnostic, and nothing violates a ceiling.
 
 After the last item is committed, run `node SCRIPTS/ratchet.mjs snapshot` and commit `.ratchet/state.json` on its own ("Record the ratchet snapshot"). A snapshot is keyed by commit, and later runs treat commits that touch only `.ratchet/` as no change, so a re-run right after this changes nothing.
 
