@@ -9,7 +9,7 @@ What `ratchet.mjs measure` counts, why each is a nuance trap, and how to enforce
 | `timers` | Timers are the easy patch over an ordering or architecture problem ("wait 300ms then scroll"). They pile up, cause jank and flaky tests. | Name the event being waited for and wire to it (transition end, layout callback, a flow). Keep timers only inside a few named helpers (`debounce`, `flash`, `sleep` in a CLI) and ban them elsewhere. |
 | `clock-reads` | Code that reads the clock can't be tested at midnight, across time zones or DST. | Pass `now` in, or read it from one provider (a `Clock` injected, a `rememberNow()`). Ban direct reads outside it. |
 | `escape-hatches` | Each one is an agent winning an argument with the type checker or linter. | Fix the type. Ban the hatch; where one is genuinely needed, require a rule-specific reason in a dedicated helper, not inline. |
-| `effects` | Effects are the classic nuance API: derived state, event handling and syncing all look like effects. | Derive instead (`$derived`, `useMemo`, `derivedStateOf`, a ViewModel flow). Wrap the legit uses (subscriptions, observers, latest-wins async) in small named helpers; ban raw effects outside them. |
+| `effects` | Effects are the classic nuance API: derived state, event handling and syncing all look like effects. Syncing with an external system is a legitimate use. | When the repo shows misuse: derive instead (`$derived`, `useMemo`, `derivedStateOf`, a ViewModel flow) and move the legitimate uses (subscriptions, observers, latest-wins async) into purpose-specific helpers, then restrict raw effects outside them, with the helpers' directory under its own baseline. |
 | `justification-comments` | Comments explaining why a shortcut is fine are how shortcuts spread. | Fix the cause and delete the comment, or turn the reason into a check. |
 | `todos` | Promises nobody tracks. | An issue, or delete it. |
 
@@ -17,7 +17,7 @@ Committed generated files (fixtures, snapshots, generated clients, lockfile-like
 
 Comment ratio: a high ratio is not a finding by itself. Look at what comments say. Domain "why" comments are fine; a comment that holds examples of inputs ("14- oz . can") is a test case in disguise; a comment that restates the code or defends a workaround should go.
 
-Git metrics (`report`): a file in `hotspots` with many fix commits is where a missing abstraction usually lives.
+Git metrics (`report`): a file in `hotspots` with many fix commits is where a missing abstraction usually lives. Fix ratio, reverts, comment ratio and test-file counts are weak signals of quality; use them to find where to look, not to claim an effect.
 
 ## TypeScript / JavaScript
 
@@ -25,8 +25,8 @@ Git metrics (`report`): a file in `hotspots` with many fix commits is where a mi
 - **Bans**: `no-restricted-syntax` with a selector and a message, e.g. `CallExpression[callee.name='setTimeout']`; `no-restricted-imports` / `no-restricted-globals` for APIs and modules. Use `overrides`/`files` to allow the one helper file.
 - **Boundaries**: dependency-cruiser `forbidden` rules, or workspace `package.json` dependencies (a package can't import what it doesn't depend on, with pnpm's strict linking). Name directories after the boundary (`electron-main`, `electron-renderer`, `core`, `ingest`) so the context is in the path.
 - **Unused code**: knip.
-- **React**: ban `useEffect`/`useLayoutEffect` outside `src/lib/hooks/**`; give `useSubscription`, `useLatest(asyncFn)`, `useInterval` instead.
-- **Svelte 5**: ban `$effect` outside `src/lib/reactive/**` (eslint-plugin-svelte parses runes; or a `ratchet-check` probe `\$effect(\.pre)?\s*\(`). Replacements: `$derived` for derived values, a `latest(fn)` helper for request/response with stale-answer dropping, `observe(el, cb)` for IntersectionObserver/ResizeObserver, `flash(ms)` for transient UI state. Resetting state "when X changes" is usually a `$derived` with a key or an event handler, not an effect.
+- **React**: when effects are misused here, restrict `useEffect`/`useLayoutEffect` to purpose-specific hooks (`useSubscription`, `useLatest(asyncFn)`, `useInterval`), following React's own guidance ("You Might Not Need an Effect", custom hooks named for their purpose, not generic effect wrappers).
+- **Svelte 5**: when effects are misused here, restrict `$effect` to `src/lib/reactive/**` (eslint-plugin-svelte parses runes; or a `ratchet-check` probe `\$effect(\.pre)?\s*\(`). Replacements: `$derived` for derived values, a `latest(fn)` helper for request/response with stale-answer dropping, `observe(el, cb)` for IntersectionObserver/ResizeObserver, `flash(ms)` for transient UI state. Resetting state "when X changes" is usually a `$derived` with a key or an event handler, not an effect.
 - **Vue**: same for `watch`/`watchEffect`; prefer `computed`.
 
 ## Kotlin / Android / Compose

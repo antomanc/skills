@@ -8,7 +8,7 @@ npx skills add antomanc/skills --skill ratchet
 
 ## ratchet
 
-Makes a codebase one agents can be trusted in. It finds where agents produce slop (effects, timers, escape hatches, clock reads, cross-layer imports, rules that live only in prose), proposes a short plan, and turns each accepted item into a deterministic check: a lint rule, an architecture test, or a ratcheted probe, each with a canary that proves it fires.
+Makes a codebase one agents can be trusted in. It finds where agents produce slop (effects, timers, escape hatches, clock reads, cross-layer imports, rules that live only in prose), proposes a short plan, and turns each accepted item into a deterministic check: a lint rule, an architecture test, or a probe with a per-file ratchet, each with a canary that proves it fires for its own reason.
 
 Run it again on the same project at any time. It checks that every guardrail still fires, lowers baselines as old occurrences go away, picks up new prose rules, and reports before/after trends once there is enough history. On an unchanged project a re-run changes nothing.
 

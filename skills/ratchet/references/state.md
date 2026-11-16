@@ -27,7 +27,7 @@ The only state the skill keeps. Committed with the project.
     }
   ],
   "declined": [
-    { "id": "timers-in-ingest-cli", "reason": "sleep between polite crawl requests is the point", "date": "2026-11-16" }
+    { "id": "timers-in-ingest-cli", "reason": "sleep between polite crawl requests is the point", "revisitWhen": "timers show up outside the crawler", "date": "2026-11-16" }
   ],
   "history": [
     { "commit": "491a005", "date": "2026-11-16", "metrics": {}, "git": {} }
@@ -42,7 +42,8 @@ Fields:
 - `enforcedBy`: where the rule actually lives (detekt config, eslint rule name, Konsist test, convention script, ratchet-check probe).
 - `check`: command that exits non-zero when the rule is broken. Rules enforced by the same command share it; `verify` runs each distinct command once.
 - `probe` (optional): regex over lines, with globs. Present when ratchet-check enforces the rule, and also useful for native-tool rules so `measure` can track the count. Patterns are JS regex source; escape backslashes for JSON.
-- `baseline`: per-file allowed counts. Only `baseline <id>` sets it, only `tighten` lowers it. Missing file = 0 allowed.
-- `canary`: a file that must make `check` (or `canary.check`) fail. Its directory must exist; its path must not.
-- `declined`: findings the user or the skill decided against, never proposed again unless the user asks.
-- `history`: one snapshot per commit; `report` compares the first with now.
+- `baseline`: per-file ceiling on occurrences. Only `baseline <id>` sets it, only `tighten` lowers it. Missing file = 0 allowed. A file can swap one occurrence for another under its ceiling; this is a ratchet on counts, not proof that no new code matches.
+- `raised`: every `baseline <id> --raise --reason` with its date and totals. These are the rule's false positives and deliberate exceptions.
+- `canary`: a file that must make `check` (or `canary.check`) fail, with output that names the canary (its path, or `canary.expect`). The check must pass without it. Its directory must exist; its path must not.
+- `declined`: findings decided against, with `reason` and `revisitWhen`. Re-runs skip them until `revisitWhen` happens or the user asks.
+- `history`: one snapshot per commit; the first is the before-snapshot (`phase: "before"` when taken with `--before`), and `report` compares it with now.

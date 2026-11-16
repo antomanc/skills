@@ -3,12 +3,14 @@
 //   inventory            stack, guardrail tools, CI steps, verification setup, prose rules
 //   measure              hotspot probes and rule counts at HEAD
 //   snapshot             measure + git metrics, saved in .ratchet/state.json history (one entry per commit)
-//   verify [--no-checks] run each rule's check, prove each canary fails, check the ratchet
+//   snapshot --before <commit>  measure the project as it was before the changes, kept as the first snapshot
+//   verify [--no-checks] run each rule's check, prove each canary fails for its own reason; exits 1 on any failure
 //   tighten              lower every rule's per-file baseline to today's counts (never raises)
 //   baseline <rule-id>   set a new rule's baseline to today's counts
 //   report               before/after: probes since the first snapshot, git metrics in equal windows around it
 import { execFileSync, execSync } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { repoRoot, listFiles, readText, matchProbe, loadState, statePath, ratchet, globToRegExp } from './ratchet-check.mjs'
 
@@ -79,7 +81,8 @@ function measure(files = listFiles(root)) {
     }
   }
   const tests = files.filter((f) => !isSkipped(f) && isTest(f) && SOURCE_EXT.test(f)).length
-  const state = loadState(root)
+  const stateFlag = args.indexOf('--state')
+  const state = stateFlag !== -1 ? JSON.parse(fs.readFileSync(args[stateFlag + 1], 'utf8')) : loadState(root)
   const rules = state ? Object.fromEntries(ratchet(root, state, files).map((r) => [r.id, r.total])) : {}
   const out = { sourceFiles: src.length, sourceLines: lines, commentLines: comments, commentRatio: +(comments / Math.max(lines, 1)).toFixed(3), testFiles: tests, probes: {}, rules }
   for (const [id, e] of Object.entries(probes)) {
@@ -209,9 +212,30 @@ function countsFor(rule) {
 function run(command, timeout = 900000) {
   try {
     const o = execSync(command, { cwd: root, encoding: 'utf8', stdio: 'pipe', timeout, maxBuffer: 1 << 26 })
-    return { code: 0, tail: o.split('\n').slice(-6).join('\n') }
+    return { code: 0, output: o, tail: o.split('\n').slice(-6).join('\n') }
   } catch (e) {
-    return { code: e.status ?? 1, tail: ((e.stdout ?? '') + (e.stderr ?? '')).split('\n').slice(-12).join('\n') }
+    const o = (e.stdout ?? '') + (e.stderr ?? '')
+    return { code: e.status ?? 1, output: o, tail: o.split('\n').slice(-12).join('\n') }
+  }
+}
+
+// A canary counts only when the check passes without it and its failure names the canary:
+// by default its path, or rule.canary.expect when the check reports something else.
+function canary(rule, control) {
+  const p = path.join(root, rule.canary.path)
+  if (fs.existsSync(p)) return 'SKIPPED: canary path exists'
+  if (!fs.existsSync(path.dirname(p))) return 'SKIPPED: directory gone, update canary.path'
+  const command = rule.canary.check ?? rule.check ?? 'node scripts/ratchet-check.mjs'
+  const before = command === rule.check && control ? control : run(command)
+  if (before.code !== 0) return 'SKIPPED: the check fails without the canary'
+  fs.writeFileSync(p, rule.canary.content)
+  try {
+    const c = run(command)
+    if (c.code === 0) return 'DOES NOT FIRE'
+    const expect = rule.canary.expect ?? rule.canary.path
+    return c.output.includes(expect) ? 'fires' : 'FAILS FOR ANOTHER REASON: output does not mention ' + expect
+  } finally {
+    fs.rmSync(p, { force: true })
   }
 }
 
@@ -222,43 +246,43 @@ function verify() {
   const byId = Object.fromEntries(ratchet(root, state, files).map((r) => [r.id, r]))
   const results = []
   const checked = new Map()
+  let ok = true
   for (const rule of state.rules ?? []) {
     const r = { id: rule.id }
-    if (byId[rule.id]) Object.assign(r, { total: byId[rule.id].total, violations: byId[rule.id].violations.length, slack: byId[rule.id].slack })
+    if (byId[rule.id]) {
+      Object.assign(r, { total: byId[rule.id].total, violations: byId[rule.id].violations.length, slack: byId[rule.id].slack })
+      if (r.violations) ok = false
+    }
+    let control
     if (rule.check && !flag('no-checks')) {
       if (!checked.has(rule.check)) checked.set(rule.check, run(rule.check))
-      const c = checked.get(rule.check)
-      r.check = c.code === 0 ? 'pass' : 'FAIL'
-      if (c.code) r.checkOutput = c.tail
+      control = checked.get(rule.check)
+      r.check = control.code === 0 ? 'pass' : 'FAIL'
+      if (control.code) { r.checkOutput = control.tail; ok = false }
     }
     if (rule.canary && !flag('no-checks')) {
-      const p = path.join(root, rule.canary.path)
-      if (fs.existsSync(p)) r.canary = 'SKIPPED: canary path exists'
-      else if (!fs.existsSync(path.dirname(p))) r.canary = 'SKIPPED: directory gone, update canary.path'
-      else {
-        fs.writeFileSync(p, rule.canary.content)
-        try {
-          const c = run(rule.canary.check ?? rule.check ?? 'node scripts/ratchet-check.mjs')
-          r.canary = c.code !== 0 ? 'fires' : 'DOES NOT FIRE'
-        } finally {
-          fs.rmSync(p, { force: true })
-        }
-      }
+      r.canary = canary(rule, control)
+      if (r.canary !== 'fires') ok = false
     }
     results.push(r)
   }
-  return { head: head(), rules: results }
+  if (!ok) process.exitCode = 1
+  return { head: head(), ok, rules: results }
 }
+
+// Files whose change can move a measurement or a rule: source, the prose rules come from, CI and tool config.
+const MEASURED = (f) => f && !f.startsWith('.ratchet/') && !isSkipped(f) && (SOURCE_EXT.test(f) || PROSE.some((r) => r.test(f)) || /^\.github\/workflows\/|(^|\/)(package\.json|[\w.-]*config[\w.-]*\.\w+|\.?[\w-]*rc(\.\w+)?|[\w-]+\.gradle\.kts|libs\.versions\.toml|pyproject\.toml|Cargo\.toml|go\.mod)$/.test(f))
 
 function snapshot() {
   const state = loadState(root) ?? { version: 1, rules: [], declined: [], history: [] }
+  const before = args.indexOf('--before')
+  if (before !== -1) return snapshotBefore(state, args[before + 1])
   const h = head()
   const last = state.history?.at(-1)
-  if (last && last.commit !== h) {
+  if (last) {
     try {
-      const counts = (f) => f && SOURCE_EXT.test(f) && !isSkipped(f)
-      const changed = git(['diff', '--name-only', last.commit, 'HEAD']).split('\n').filter(counts)
-      const dirty = git(['status', '--porcelain']).split('\n').map((l) => l.slice(3)).filter(counts)
+      const changed = last.commit === h ? [] : git(['diff', '--name-only', last.commit, 'HEAD']).split('\n').filter(MEASURED)
+      const dirty = git(['status', '--porcelain']).split('\n').filter((l) => l && l.slice(0, 2) !== '??').map((l) => l.slice(3)).filter(MEASURED)
       if (!changed.length && !dirty.length) return { unchanged: true, since: last.commit }
     } catch {}
   }
@@ -267,6 +291,28 @@ function snapshot() {
   state.history.push(entry)
   saveState(state)
   return entry
+}
+
+// The project as it was at <rev>, measured with today's rules, kept as the first snapshot so the report starts before the changes.
+function snapshotBefore(state, rev) {
+  if (!rev) return { error: 'snapshot --before <commit>' }
+  const commit = git(['rev-parse', '--short', rev]).trim()
+  const date = git(['show', '-s', '--format=%cs', commit]).trim()
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ratchet-before-'))
+  const stateFile = path.join(tmp, 'state.json')
+  fs.writeFileSync(stateFile, JSON.stringify({ ...state, history: [] }))
+  const tree = path.join(tmp, 'tree')
+  try {
+    git(['worktree', 'add', '--detach', '-q', tree, commit])
+    const metrics = JSON.parse(execFileSync(process.execPath, [new URL(import.meta.url).pathname, 'measure', '--state', stateFile], { cwd: tree, encoding: 'utf8', maxBuffer: 1 << 26 }))
+    const entry = { commit, date, phase: 'before', metrics }
+    state.history = [entry, ...(state.history ?? []).filter((e) => e.commit !== commit)]
+    saveState(state)
+    return entry
+  } finally {
+    try { git(['worktree', 'remove', '--force', tree]) } catch {}
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
 }
 
 function report() {
@@ -315,8 +361,15 @@ function baseline(id) {
   const state = loadState(root)
   const rule = state?.rules?.find((r) => r.id === id)
   if (!rule?.probe) return { error: 'no rule with a probe named ' + id + ' in .ratchet/state.json' }
-  if (rule.baseline && !flag('raise')) return { error: id + ' already has a baseline; use tighten, or --raise to reset it (only with the user OK)' }
-  rule.baseline = countsFor(rule)
+  if (rule.baseline && !flag('raise')) return { error: id + ' already has a baseline; use tighten, or --raise --reason "..." to reset it (only with the user OK)' }
+  const reasonAt = args.indexOf('--reason')
+  if (rule.baseline && reasonAt === -1) return { error: 'a raise needs --reason "...": it is the record of a false positive or a deliberate exception' }
+  if (rule.baseline) {
+    const sum = (o) => Object.values(o).reduce((a, b) => a + b, 0)
+    const next = countsFor(rule)
+    ;(rule.raised ??= []).push({ date: new Date().toISOString().slice(0, 10), from: sum(rule.baseline), to: sum(next), reason: args[reasonAt + 1] })
+    rule.baseline = next
+  } else rule.baseline = countsFor(rule)
   saveState(state)
   return { id, baselineTotal: Object.values(rule.baseline).reduce((a, b) => a + b, 0), files: Object.keys(rule.baseline).length }
 }
