@@ -26,6 +26,7 @@ Then read, don't just count:
 - Open the top files of each probe and decide what the hits are. 12 effects in one component is a missing abstraction; one `setTimeout` in a CLI's sleep helper is fine. Counts point; reading decides.
 - Read every prose rule the inventory listed (`prose`). Skip lines inside managed blocks of other tools (`managedBy`) unless they contradict the code.
 - Read `git log --oneline -40` and look for the same kind of fix landing twice: that is a correction that never became a check.
+- Look for generated files that are committed (fixtures, snapshots, generated code) and check they match what their generator writes today; a stale one is a missing freshness check.
 - Find the project's existing check mechanism (a convention script, a lint config, an architecture test). Extending it beats adding a new tool.
 
 Use [references/catalog.md](references/catalog.md) for what each probe means per stack and how to enforce it there.

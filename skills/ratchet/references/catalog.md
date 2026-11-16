@@ -13,6 +13,8 @@ What `ratchet.mjs measure` counts, why each is a nuance trap, and how to enforce
 | `justification-comments` | Comments explaining why a shortcut is fine are how shortcuts spread. | Fix the cause and delete the comment, or turn the reason into a check. |
 | `todos` | Promises nobody tracks. | An issue, or delete it. |
 
+Committed generated files (fixtures, snapshots, generated clients, lockfile-like data): if a script regenerates them, CI should regenerate and fail on a diff. A doc line saying "the committed X can lag" is this check missing.
+
 Comment ratio: a high ratio is not a finding by itself. Look at what comments say. Domain "why" comments are fine; a comment that holds examples of inputs ("14- oz . can") is a test case in disguise; a comment that restates the code or defends a workaround should go.
 
 Git metrics (`report`): a file in `hotspots` with many fix commits is where a missing abstraction usually lives.
