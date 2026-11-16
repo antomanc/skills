@@ -11,6 +11,23 @@ This skill runs the same loop every time on the same project. The first run sets
 
 `SCRIPTS` below is this skill's `scripts/` directory. Run everything from the project root.
 
+## 0. Foundation (new or young projects)
+
+A fresh project is the cheapest moment for strict rules: nothing to migrate, every rule at zero. The talk's examples (ban `useEffect` in product code, ban justification comments, hide nuance behind APIs) apply from day one, because the misuse they prevent is already documented across codebases; the evidence is the catalog, not this repo.
+
+For JS/TS projects:
+
+```sh
+node SCRIPTS/foundation.mjs           # checklist: what is present, what is missing
+node SCRIPTS/foundation.mjs --apply   # adds what is missing; never overwrites; twice = no change
+```
+
+`--apply` adds: an oxlint config with parser-based bans (`useEffect`/`$effect`/`watch` and timers outside the helpers directory, `any`, ts comments, non-null assertions), package scripts (`typecheck`, `lint`, `knip`, `test`, `ratchet`, and `verify` that runs them all), `scripts/ratchet-check.mjs` and rules with canaries in `.ratchet/state.json`, a CI workflow running `verify` (only if there is none), a short managed block in AGENTS.md, and a feature map stub for UI apps. Then do what it lists under `manual`: install the dev dependencies, set the strict tsconfig flags, run `verify` and fix the template's own violations (fix them, don't baseline them: a new project starts at zero), and run `ratchet.mjs verify` until every rule passes and every canary fires.
+
+Then decide with the user, in one short question round, what only they know: the layers and boundaries the app will have (for example `src/domain` that never imports UI), the helpers directory name, and whether e2e tests start now or with the first screen. Turn the answers into rules the same way. Other stacks: [references/foundation.md](references/foundation.md).
+
+Take the first snapshot after the foundation commit; later runs are ordinary re-runs.
+
 ## 1. Look
 
 Run both, in parallel:
@@ -20,9 +37,11 @@ node SCRIPTS/ratchet.mjs inventory   # stack, tools, CI steps, verification setu
 node SCRIPTS/ratchet.mjs measure     # probe counts and top files, comment ratio, rule totals
 ```
 
-On a **first run**, take the before-snapshot now, before any change: `node SCRIPTS/ratchet.mjs snapshot` (or later, `snapshot --before <commit>` measures the project as it was at that commit). Without it the report can't show what the first changes did.
+**Decide the mode from the inventory, before anything writes state:** `inventory` reports `state: null` on a first run.
 
-If `.ratchet/state.json` exists, this is a **re-run**: also run `node SCRIPTS/ratchet.mjs verify` (add `--no-checks` only if the user wants it fast; checks can take minutes) and `node SCRIPTS/ratchet.mjs report`, then go to section 5 before planning anything new.
+- **New or young project** (just bootstrapped, or little code and no recurring fixes yet): go to section 0 first. There is no history to find misuse in, so it installs the guardrails whose need is already established everywhere (catalog), at zero tolerance while that is free.
+- **First run on an existing project**: take the before-snapshot now, before any change: `node SCRIPTS/ratchet.mjs snapshot`. (If changes were made already, `snapshot --before <commit>` measures the project as it was at that commit.) Without it the report can't show what the first changes did.
+- **Re-run**: `.ratchet/state.json` exists: also run `node SCRIPTS/ratchet.mjs verify` (add `--no-checks` only if the user wants it fast; checks can take minutes) and `node SCRIPTS/ratchet.mjs report`, then go to section 5 before planning anything new.
 
 Then read, don't just count:
 - Open the top files of each probe and decide what the hits are. 12 effects in one component is a missing abstraction; one `setTimeout` in a CLI's sleep helper is fine. Counts point; reading decides.
@@ -77,7 +96,7 @@ Rules for the plan:
 For each item, in order, as its own commit:
 
 1. **Fix the root cause first where it is cheap.** Write the API, move the code, then ban the raw form. If cleaning every old occurrence is too big, ratchet instead (step 3).
-2. **Enforce it with the project's own tools first**, in this order: types or module structure (it cannot be written) → the native linter or architecture test (detekt, eslint/oxlint, Konsist, dependency-cruiser, Gradle module graph) → the project's existing convention script → a probe in `.ratchet/state.json` checked by `ratchet-check`. Error messages say what to do instead and why, in one sentence: they are the prompt the next agent reads. "Read time through rememberWeatherTime(); a composable that reads the clock cannot be tested at midnight" — not "Forbidden call".
+2. **Enforce it with the project's own tools first**, in this order: types or module structure (it cannot be written) → a parser-based linter or architecture test (oxlint/eslint, detekt, Konsist, dependency-cruiser, the resolved Gradle module graph) → the project's existing convention script → a probe in `.ratchet/state.json` checked by `ratchet-check`. A project with no linter gets one when a rule needs it: oxlint parses TS, JSX, Svelte and Vue script blocks with no config, and its `no-restricted-imports`, `no-restricted-globals` and `no-restricted-properties` carry most bans with a message. Use regex probes for what no linter sees, or as the per-file ceiling over legacy files while the linter blocks new ones. A check that parses one syntax must cover the others that mean the same thing (both `projects.x` and `project(":x")` in Gradle), with a canary for each. Error messages say what to do instead and why, in one sentence: they are the prompt the next agent reads. "Read time through rememberWeatherTime(); a composable that reads the clock cannot be tested at midnight" — not "Forbidden call".
 3. **Ratchet what you can't clean now.** Add the rule to `.ratchet/state.json` (schema in [references/state.md](references/state.md)) with a `probe`, then `node SCRIPTS/ratchet.mjs baseline <id>`. Each file gets a ceiling: as many occurrences as it has today, never more. Be honest about what that is: a file can still swap an old occurrence for a new one, and a regex sees text, not syntax. Where that matters, move the rule to a parser-based tool. The first time a project gets a probe rule, copy `SCRIPTS/ratchet-check.mjs` to `scripts/ratchet-check.mjs` and add `node scripts/ratchet-check.mjs` to CI next to the other checks.
 4. **Add a canary**: a minimal file that breaks the rule, in `rule.canary`. `verify` runs the check without it (it must pass), writes it, runs the check again and counts it only when the failure names the canary (its path, or `canary.expect` when the check reports something else), then deletes it. A canary that breaks the build for another reason is reported as such, not as proof.
 5. **Shorten the prose it replaces, keep the why.** Delete procedure the check now carries; keep one line of rationale, or a link to the ADR, when the check enforces only part of the original intent or a future maintainer would ask why the constraint exists. Keep one line in AGENTS.md (or the standards file) when an agent needs to know the API exists: "Time comes from rememberWeatherTime()". Never add rules about the rule.

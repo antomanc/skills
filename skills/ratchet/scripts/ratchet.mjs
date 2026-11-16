@@ -219,8 +219,9 @@ function run(command, timeout = 900000) {
   }
 }
 
-// A canary counts only when the check passes without it and its failure names the canary:
-// by default its path, or rule.canary.expect when the check reports something else.
+// A canary counts only when the check passes without it and its failure names both the canary's
+// path and the rule's diagnostic (canary.expect, by default ratchet-check's "[rule-id]"), so a build
+// that breaks for another reason, even on the canary file, is not taken as proof.
 function canary(rule, control) {
   const p = path.join(root, rule.canary.path)
   if (fs.existsSync(p)) return 'SKIPPED: canary path exists'
@@ -232,8 +233,10 @@ function canary(rule, control) {
   try {
     const c = run(command)
     if (c.code === 0) return 'DOES NOT FIRE'
-    const expect = rule.canary.expect ?? rule.canary.path
-    return c.output.includes(expect) ? 'fires' : 'FAILS FOR ANOTHER REASON: output does not mention ' + expect
+    const expect = rule.canary.expect ?? '[' + rule.id + ']'
+    const lines = c.output.split('\n')
+    if (lines.some((l) => l.includes(rule.canary.path) && l.includes(expect))) return 'fires'
+    return 'FAILS FOR ANOTHER REASON: no output line names both ' + rule.canary.path + ' and ' + expect
   } finally {
     fs.rmSync(p, { force: true })
   }
@@ -241,7 +244,10 @@ function canary(rule, control) {
 
 function verify() {
   const state = loadState(root)
-  if (!state) return { error: 'no .ratchet/state.json' }
+  if (!state) {
+    process.exitCode = 1
+    return { error: 'no .ratchet/state.json' }
+  }
   const files = listFiles(root)
   const byId = Object.fromEntries(ratchet(root, state, files).map((r) => [r.id, r]))
   const results = []
@@ -249,6 +255,8 @@ function verify() {
   let ok = true
   for (const rule of state.rules ?? []) {
     const r = { id: rule.id }
+    if (!rule.check && !rule.probe) { r.incomplete = 'no check and no probe: nothing enforces this rule'; ok = false }
+    if (!rule.canary) { r.incomplete = (r.incomplete ? r.incomplete + '; ' : '') + 'no canary: nothing proves the check fires'; ok = false }
     if (byId[rule.id]) {
       Object.assign(r, { total: byId[rule.id].total, violations: byId[rule.id].violations.length, slack: byId[rule.id].slack })
       if (r.violations) ok = false
@@ -271,7 +279,7 @@ function verify() {
 }
 
 // Files whose change can move a measurement or a rule: source, the prose rules come from, CI and tool config.
-const MEASURED = (f) => f && !f.startsWith('.ratchet/') && !isSkipped(f) && (SOURCE_EXT.test(f) || PROSE.some((r) => r.test(f)) || /^\.github\/workflows\/|(^|\/)(package\.json|[\w.-]*config[\w.-]*\.\w+|\.?[\w-]*rc(\.\w+)?|[\w-]+\.gradle\.kts|libs\.versions\.toml|pyproject\.toml|Cargo\.toml|go\.mod)$/.test(f))
+const MEASURED = (f) => !!f && !f.startsWith('.ratchet/') && (/^\.github\/workflows\/|^\.gitlab-ci\.yml$/.test(f) || (!isSkipped(f) && (SOURCE_EXT.test(f) || PROSE.some((r) => r.test(f)) || /(^|\/)(package\.json|[\w.-]*config[\w.-]*\.\w+|\.?[\w-]*rc(\.\w+)?|[\w-]+\.gradle\.kts|libs\.versions\.toml|pyproject\.toml|Cargo\.toml|go\.mod)$/.test(f))))
 
 function snapshot() {
   const state = loadState(root) ?? { version: 1, rules: [], declined: [], history: [] }
@@ -376,4 +384,6 @@ function baseline(id) {
 
 const commands = { inventory, measure: () => measure(), snapshot, verify, report, tighten, baseline: () => baseline(args[0]) }
 const fn = commands[cmd]
-console.log(JSON.stringify(fn ? fn() : { usage: 'ratchet.mjs inventory | measure | snapshot | verify [--no-checks] | tighten | baseline <rule-id> [--raise] | report' }, null, 1))
+const result = fn ? fn() : null
+if (!fn || result?.error) process.exitCode = 1
+console.log(JSON.stringify(fn ? result : { usage: 'ratchet.mjs inventory | measure | snapshot [--before <commit>] | verify [--no-checks] | tighten | baseline <rule-id> [--raise --reason <why>] | report | foundation [--apply]' }, null, 1))
