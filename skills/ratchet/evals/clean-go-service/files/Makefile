@@ -1,0 +1,6 @@
+check:
+	go vet ./...
+	golangci-lint run
+	go test -race ./...
+
+.PHONY: check

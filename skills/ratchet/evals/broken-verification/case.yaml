@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: broken-verification
+context:
+  scaffold_script: place-files.sh
+expected_outcome: |
+  The agent finds the three planted faults (verify and CI do not run the lint script; the tests canary is a syntax error whose expected text is in its own source; the console suppression is explained only by "needed"), fixes them, and reports per rule whether it is verified, failed or not proven, with evidence.

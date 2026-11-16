@@ -238,6 +238,8 @@ function names(output, file, expect) {
 
 function canary(rule, control, aggregate) {
   const p = path.join(root, rule.canary.path)
+  // A tool that echoes the offending source would "prove" any expected text taken from the canary itself.
+  if (rule.canary.content.includes(rule.canary.expect ?? '[' + rule.id + ']')) return 'INVALID CANARY: the expected text appears in the canary itself; expect the tool\'s own diagnostic (a rule name or message the tool prints)'
   if (fs.existsSync(p)) return 'SKIPPED: canary path exists'
   const command = rule.canary.check ?? rule.check ?? 'node scripts/ratchet-check.mjs'
   const before = command === rule.check && control ? control : run(command)

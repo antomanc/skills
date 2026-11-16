@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: react-effect-misuse
+context:
+  scaffold_script: place-files.sh
+expected_outcome: |
+  The agent fixes the fetch race and the derived-state effects in ProductSearch.tsx, replaces the setTimeout focus workaround and the any, keeps the legitimate matchMedia effect, and adds a deterministic check (lint errors, with a demonstrated failing example) so new derived-state or raw effects in product code fail the build.

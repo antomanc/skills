@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: clean-go-service
+context:
+  scaffold_script: place-files.sh
+expected_outcome: |
+  The agent recognises that the project already has sound, enforced guardrails (clock injection with a forbidigo rule, nolintlint requiring explanations, make check in CI), keeps them intact, and adds little or nothing. Anything it adds is proportionate, explained, and proven by a deliberately broken example.

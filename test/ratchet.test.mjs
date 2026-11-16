@@ -198,3 +198,10 @@ test('verify --aggregate proves the verify command runs each rule', () => {
   assert.match(r.json.rules[0].canary, /VERIFY DOES NOT RUN IT/)
   assert.equal(r.code, 1)
 })
+
+test('a canary whose expected text is in its own source is not proof', () => {
+  const dir = repo({ 'test/a.test.js': "import { test } from 'node:test'\ntest('ok', () => {})\n", ...state([{ id: 'tests-run', message: 'm', check: 'node --test', canary: { path: 'test/canary.test.js', content: "import { test } from 'node:test'\ntest('ratchet canary', () => { throw new Error('ratchet canary' }\n", expect: 'ratchet canary' } }]) })
+  const r = run(dir, RATCHET, 'verify')
+  assert.match(r.json.rules[0].canary, /INVALID CANARY/)
+  assert.equal(r.code, 1)
+})

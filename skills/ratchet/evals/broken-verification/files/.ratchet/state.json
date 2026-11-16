@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "verify": "npm run verify",
+  "rules": [
+    {
+      "id": "no-console-in-src",
+      "intent": "nuance-apis",
+      "kind": "pattern",
+      "message": "Use the logger in src/log.js; console output leaks into the CLI's JSON.",
+      "enforcedBy": "scripts/lint.mjs",
+      "check": "node scripts/lint.mjs",
+      "canary": {
+        "path": "src/ratchet-canary-console.js",
+        "content": "console.log(\"x\")\n",
+        "expect": "no-console"
+      },
+      "added": "2026-09-02"
+    },
+    {
+      "id": "tests-run",
+      "intent": "tests",
+      "kind": "behavior",
+      "message": "A failing test fails verify.",
+      "enforcedBy": "node --test",
+      "check": "node --test",
+      "canary": {
+        "path": "test/ratchet-canary.test.js",
+        "content": "import { test } from 'node:test'\ntest('ratchet canary', () => { throw new Error('ratchet canary' }\n",
+        "expect": "ratchet canary"
+      },
+      "added": "2026-09-02"
+    },
+    {
+      "id": "explained-suppressions",
+      "intent": "suppressions",
+      "kind": "pattern",
+      "message": "An exception names its rule and says why.",
+      "enforcedBy": "ratchet-check probe",
+      "check": "node scripts/ratchet-check.mjs",
+      "probe": {
+        "pattern": "^(?!.*(reason\\s*=|\\s--\\s+\\S|\\b(because|since|until|so that)\\b)).*(lint-disable|@ts-ignore)",
+        "include": [
+          "src/**"
+        ]
+      },
+      "baseline": {},
+      "canary": {
+        "path": "src/ratchet-canary-suppression.js",
+        "content": "// lint-disable no-console\n",
+        "expect": "[explained-suppressions]"
+      },
+      "added": "2026-09-02"
+    }
+  ],
+  "declined": [
+    {
+      "intent": "compiler",
+      "reason": "plain JavaScript, no type checker yet",
+      "revisitWhen": "the project adopts TypeScript or JSDoc types"
+    }
+  ],
+  "history": []
+}

@@ -1,0 +1,13 @@
+{
+  "name": "invoice-cli",
+  "version": "1.0.0",
+  "type": "module",
+  "bin": {
+    "invoice": "src/cli.js"
+  },
+  "scripts": {
+    "test": "node --test",
+    "lint": "node scripts/lint.mjs",
+    "verify": "node --test && node scripts/ratchet-check.mjs"
+  }
+}
