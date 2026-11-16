@@ -1,6 +1,6 @@
 # Probe catalog
 
-What `ratchet.mjs measure` counts, why each is a nuance trap, and how to enforce the fix per stack. Read the section for the project's stack only.
+What `wellkept.mjs measure` counts, why each is a nuance trap, and how to enforce the fix per stack. Read the section for the project's stack only.
 
 ## Universal
 
@@ -26,7 +26,7 @@ Git metrics (`report`): a file in `hotspots` with many fix commits is where a mi
 - **Boundaries**: dependency-cruiser `forbidden` rules, or workspace `package.json` dependencies (a package can't import what it doesn't depend on, with pnpm's strict linking). Name directories after the boundary (`electron-main`, `electron-renderer`, `core`, `ingest`) so the context is in the path.
 - **Unused code**: knip.
 - **React**: when effects are misused here, restrict `useEffect`/`useLayoutEffect` to purpose-specific hooks (`useSubscription`, `useLatest(asyncFn)`, `useInterval`), following React's own guidance ("You Might Not Need an Effect", custom hooks named for their purpose, not generic effect wrappers).
-- **Svelte 5**: when effects are misused here, restrict `$effect` to `src/lib/reactive/**` (eslint-plugin-svelte parses runes; or a `ratchet-check` probe `\$effect(\.pre)?\s*\(`). Replacements: `$derived` for derived values, a `latest(fn)` helper for request/response with stale-answer dropping, `observe(el, cb)` for IntersectionObserver/ResizeObserver, `flash(ms)` for transient UI state. Resetting state "when X changes" is usually a `$derived` with a key or an event handler, not an effect.
+- **Svelte 5**: when effects are misused here, restrict `$effect` to `src/lib/reactive/**` (eslint-plugin-svelte parses runes; or a `wellkept-check` probe `\$effect(\.pre)?\s*\(`). Replacements: `$derived` for derived values, a `latest(fn)` helper for request/response with stale-answer dropping, `observe(el, cb)` for IntersectionObserver/ResizeObserver, `flash(ms)` for transient UI state. Resetting state "when X changes" is usually a `$derived` with a key or an event handler, not an effect.
 - **Vue**: same for `watch`/`watchEffect`; prefer `computed`.
 
 ## Kotlin / Android / Compose

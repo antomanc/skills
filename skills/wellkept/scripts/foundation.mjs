@@ -6,7 +6,7 @@
 //   - every assessment area below has a decision: rules (each with a check and a canary) or a recorded reason to skip it;
 //   - AGENTS.md says how to run verify.
 // The areas are questions, not mandatory restrictions: what to enforce, and with which tool, is decided per project
-// (references/stacks.md has examples). Whether verify really runs each rule is proven by ratchet.mjs verify --aggregate.
+// (references/stacks.md has examples). Whether verify really runs each rule is proven by wellkept.mjs verify --aggregate.
 //
 //   node foundation.mjs                         checklist (JSON)
 //   node foundation.mjs --verify "<command>"    record the project's verify command
@@ -14,7 +14,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { repoRoot, listFiles, loadState, statePath, matchProbe } from './ratchet-check.mjs'
+import { repoRoot, listFiles, loadState, statePath, matchProbe } from './wellkept-check.mjs'
 
 const root = repoRoot()
 const argv = process.argv.slice(2)
@@ -45,7 +45,7 @@ const SUPPRESSIONS = [
 // (eslint, oxlint, biome), a reason word, or a comment after a named rule (//nolint:errcheck // flushed above).
 const EXPLAINED = 'reason\\s*=|\\s--\\s+\\S|\\b(because|since|until|so that)\\b|:\\s*[\\w,-]+\\s+(//|#)\\s*\\S'
 export const UNEXPLAINED_PATTERN = '^(?!.*(' + EXPLAINED + ')).*(' + SUPPRESSIONS + ')'
-const DISABLE_EXCLUDE = ['**/node_modules/**', '**/vendor/**', '**/target/**', '**/build/**', '**/dist/**', '**/.gradle/**', '.git/**', '.agents/**', '.claude/**', '.codex/**', '.cursor/**', '.ratchet/**', '**/*.md', '**/*.lock', '**/*-lock.*', '**/*.lockb', 'scripts/ratchet-check.mjs']
+const DISABLE_EXCLUDE = ['**/node_modules/**', '**/vendor/**', '**/target/**', '**/build/**', '**/dist/**', '**/.gradle/**', '.git/**', '.agents/**', '.claude/**', '.codex/**', '.cursor/**', '.wellkept/**', '**/*.md', '**/*.lock', '**/*-lock.*', '**/*.lockb', 'scripts/wellkept-check.mjs']
 
 const MANIFESTS = [
   ['js/ts', /(^|\/)package\.json$/], ['rust', /(^|\/)Cargo\.toml$/], ['go', /(^|\/)go\.mod$/], ['python', /(^|\/)(pyproject\.toml|requirements\.txt|setup\.py)$/],
@@ -61,17 +61,17 @@ const changed = []
 const save = () => {
   fs.mkdirSync(path.dirname(statePath(root)), { recursive: true })
   const next = JSON.stringify(state, null, 2) + '\n'
-  if (read('.ratchet/state.json') !== next) { fs.writeFileSync(statePath(root), next); if (!changed.includes('.ratchet/state.json')) changed.push('.ratchet/state.json') }
+  if (read('.wellkept/state.json') !== next) { fs.writeFileSync(statePath(root), next); if (!changed.includes('.wellkept/state.json')) changed.push('.wellkept/state.json') }
 }
 
 const verifyArg = flagValue('verify')
 if (verifyArg) { state.verify = verifyArg; save() }
 
 if (argv.includes('--apply')) {
-  if (!exists('scripts/ratchet-check.mjs')) {
+  if (!exists('scripts/wellkept-check.mjs')) {
     fs.mkdirSync(path.join(root, 'scripts'), { recursive: true })
-    fs.copyFileSync(path.join(here, 'ratchet-check.mjs'), path.join(root, 'scripts/ratchet-check.mjs'))
-    changed.push('scripts/ratchet-check.mjs')
+    fs.copyFileSync(path.join(here, 'wellkept-check.mjs'), path.join(root, 'scripts/wellkept-check.mjs'))
+    changed.push('scripts/wellkept-check.mjs')
   }
   if (!state.rules.some((r) => r.id === 'explained-suppressions') && !argv.includes('--no-suppression-rule')) {
     const probe = { pattern: UNEXPLAINED_PATTERN, include: ['**'], exclude: DISABLE_EXCLUDE }
@@ -79,8 +79,8 @@ if (argv.includes('--apply')) {
     state.rules.push({
       id: 'explained-suppressions', intent: 'suppressions', kind: 'pattern',
       message: 'Fix the cause, or keep the exception narrow (name the rule) and say why on the same line; prefer the form the tool reports when it is no longer needed (Rust #[expect], @ts-expect-error, unused-directive reports).',
-      source: 'ratchet foundation', enforcedBy: 'ratchet-check probe', check: 'node scripts/ratchet-check.mjs', probe, baseline,
-      canary: { path: 'ratchet-canary-suppression.txt', content: 'x // nolint\n', expect: '[explained-suppressions]' },
+      source: 'wellkept foundation', enforcedBy: 'wellkept-check probe', check: 'node scripts/wellkept-check.mjs', probe, baseline,
+      canary: { path: 'wellkept-canary-suppression.txt', content: 'x // nolint\n', expect: '[explained-suppressions]' },
       added: new Date().toISOString().slice(0, 10)
     })
   }
@@ -88,17 +88,17 @@ if (argv.includes('--apply')) {
   if (state.verify) {
     const agentsFile = exists('AGENTS.md') ? 'AGENTS.md' : exists('CLAUDE.md') ? 'CLAUDE.md' : 'AGENTS.md'
     const block = [
-      '<!-- ratchet:start -->',
+      '<!-- wellkept:start -->',
       '## Checks',
       '- ' + bt(state.verify) + ' runs every check. Run it before calling work done; CI runs the same command.',
       '- A failing check says what to do instead. Fix the cause; an exception names the rule and says why on the same line.',
-      '- A mistake corrected twice becomes a check in ' + bt('.ratchet/state.json') + ', not a new line here.',
+      '- A mistake corrected twice becomes a check in ' + bt('.wellkept/state.json') + ', not a new line here.',
       ...(exists('docs/agents/feature-map.md') || argv.includes('--app') ? ['- ' + bt('docs/agents/feature-map.md') + ' names every screen and control with the code behind it; keep it current.'] : []),
-      '<!-- ratchet:end -->'
+      '<!-- wellkept:end -->'
     ].join('\n')
     const agents = read(agentsFile)
     const next = agents == null ? '# ' + path.basename(root) + '\n\n' + block + '\n'
-      : agents.includes('<!-- ratchet:start -->') ? agents.replace(/<!-- ratchet:start -->[\s\S]*?<!-- ratchet:end -->/, block)
+      : agents.includes('<!-- wellkept:start -->') ? agents.replace(/<!-- wellkept:start -->[\s\S]*?<!-- wellkept:end -->/, block)
       : agents.trimEnd() + '\n\n' + block + '\n'
     if (next !== agents) { fs.writeFileSync(path.join(root, agentsFile), next); changed.push(agentsFile) }
   }
@@ -126,10 +126,10 @@ const result = {
   stacks,
   verify: state.verify ?? 'missing: pick the one command that runs every check, then --verify "<command>"',
   ci: !workflows.length ? 'missing' : state.verify && squash(ciText).includes(squash(state.verify)) ? 'runs verify' : 'present, does not run the exact verify command',
-  agentsBlock: /<!-- ratchet:start -->/.test((read('AGENTS.md') ?? '') + (read('CLAUDE.md') ?? '')) ? 'present' : 'missing',
+  agentsBlock: /<!-- wellkept:start -->/.test((read('AGENTS.md') ?? '') + (read('CLAUDE.md') ?? '')) ? 'present' : 'missing',
   intents,
   incompleteRules: state.rules.filter((r) => !complete(r)).map((r) => r.id),
-  next: 'decide each undecided area with the user: rules (each with a check and a canary) or a declined entry with intent and reason; then ratchet.mjs verify --aggregate proves verify runs every rule'
+  next: 'decide each undecided area with the user: rules (each with a check and a canary) or a declined entry with intent and reason; then wellkept.mjs verify --aggregate proves verify runs every rule'
 }
 const missing = Object.values(intents).some((i) => i.status === 'undecided') || !state.verify || result.ci !== 'runs verify' || result.agentsBlock !== 'present' || result.incompleteRules.length
 if (missing && !argv.includes('--apply') && !verifyArg) process.exitCode = 1

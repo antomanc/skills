@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Ratchet for the rules in .ratchet/state.json, vendored into a project by the ratchet skill.
+// Per-file ratchet for the rules in .wellkept/state.json, vendored into a project by the wellkept skill.
 // A per-file ceiling: a file may keep as many matches as it had when the rule landed (its
 // baseline), counted per occurrence, never more; a file missing from the baseline may have none.
 // It is not a guarantee that no new code matches: swapping an old match for a new one in the
@@ -74,7 +74,7 @@ export function matchProbe(root, files, probe) {
 }
 
 export function statePath(root) {
-  return path.join(root, '.ratchet', 'state.json')
+  return path.join(root, '.wellkept', 'state.json')
 }
 
 export function loadState(root) {
@@ -106,7 +106,7 @@ function main() {
   const root = repoRoot()
   const state = loadState(root)
   if (!state) {
-    console.log('ratchet-check: no .ratchet/state.json, nothing to check')
+    console.log('wellkept-check: no .wellkept/state.json, nothing to check')
     return 0
   }
   let failed = 0
@@ -116,9 +116,9 @@ function main() {
       const where = v.allowed ? ' (' + v.allowed + ' allowed in this file from before the rule)' : ''
       console.error(v.file + ':' + v.lines.join(',') + ': [' + r.id + '] ' + r.message + where)
     }
-    if (r.slack) console.log('ratchet-check: [' + r.id + '] ' + r.slack + ' old match(es) gone; run the ratchet skill to lower the baseline')
+    if (r.slack) console.log('wellkept-check: [' + r.id + '] ' + r.slack + ' old match(es) gone; run the wellkept skill to lower the baseline')
   }
-  if (!failed) console.log('ratchet-check: ' + (state.rules ?? []).filter((r) => r.probe).length + ' ratcheted rule(s) hold')
+  if (!failed) console.log('wellkept-check: ' + (state.rules ?? []).filter((r) => r.probe).length + ' ratcheted rule(s) hold')
   return failed ? 1 : 0
 }
 

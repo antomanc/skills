@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// ratchet: the deterministic half of the ratchet skill. Prints JSON for the agent.
+// wellkept: the deterministic half of the wellkept skill. Prints JSON for the agent.
 //   inventory            stack, guardrail tools, CI steps, verification setup, prose rules
 //   measure              hotspot probes and rule counts at HEAD
-//   snapshot             measure + git metrics, saved in .ratchet/state.json history (one entry per commit)
+//   snapshot             measure + git metrics, saved in .wellkept/state.json history (one entry per commit)
 //   snapshot --before <commit>  measure the project as it was before the changes, kept as the first snapshot
 //   verify [--no-checks] run each rule's check, prove each canary fails for its own reason; exits 1 on any failure
 //   verify --aggregate   also prove the recorded verify command fails on each canary (it really runs every rule)
@@ -13,7 +13,7 @@ import { execFileSync, execSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { repoRoot, listFiles, readText, matchProbe, loadState, statePath, ratchet, globToRegExp } from './ratchet-check.mjs'
+import { repoRoot, listFiles, readText, matchProbe, loadState, statePath, ratchet, dueDeclines, globToRegExp } from './wellkept-check.mjs'
 
 const root = repoRoot()
 const [cmd, ...args] = process.argv.slice(2)
@@ -21,7 +21,7 @@ const flag = (name) => args.includes('--' + name)
 
 const SKIP = [
   '**/node_modules/**', '**/dist/**', '**/build/**', '**/.gradle/**', '**/vendor/**', '**/target/**',
-  '.agents/**', '.claude/**', '.codex/**', '.cursor/**', '.github/**', '.ratchet/**', '**/*.min.js', '**/*.lock', '**/*-lock.*',
+  '.agents/**', '.claude/**', '.codex/**', '.cursor/**', '.github/**', '.wellkept/**', '**/*.min.js', '**/*.lock', '**/*-lock.*',
   '**/generated/**', '**/*.g.dart', '**/*.pb.go'
 ]
 const TEST = ['**/test/**', '**/tests/**', '**/__tests__/**', '**/*.test.*', '**/*.spec.*', '**/androidTest/**', '**/e2e/**', '**/*_test.go', '**/test_*.py', '**/testFixtures/**', '**/screenshotTest/**']
@@ -146,7 +146,7 @@ const TOOLS = [
   ['ruff', /(^|\/)\.?ruff\.toml$/], ['mypy', /(^|\/)mypy\.ini$/], ['golangci', /(^|\/)\.golangci\.\w+$/], ['clippy', /(^|\/)clippy\.toml$/],
   ['playwright', /(^|\/)playwright\.config\.\w+$/], ['vitest', /(^|\/)vitest\.config\.\w+$/], ['jest', /(^|\/)jest\.config\.\w+$/],
   ['maestro', /(^|\/)\.maestro\//], ['lefthook', /(^|\/)lefthook\.ya?ml$/], ['husky', /^\.husky\//], ['pre-commit', /(^|\/)\.pre-commit-config\.yaml$/],
-  ['convention-script', /^scripts\/[\w-]*(convention|lint|guard|rule)[\w-]*\.\w+$/], ['ratchet-check', /(^|\/)ratchet-check\.mjs$/]
+  ['convention-script', /^scripts\/[\w-]*(convention|lint|guard|rule)[\w-]*\.\w+$/], ['wellkept-check', /(^|\/)wellkept-check\.mjs$/]
 ]
 
 function inventory() {
@@ -221,7 +221,7 @@ function run(command, timeout = 900000) {
 }
 
 // A canary counts only when the check passes without it and its failure names both the canary's
-// path and the rule's diagnostic (canary.expect, by default ratchet-check's "[rule-id]") in the same
+// path and the rule's diagnostic (canary.expect, by default wellkept-check's "[rule-id]") in the same
 // block of output, so a build that breaks for another reason, even on the canary file, is not proof.
 // Diagnostics span several lines in many tools (rustc, ruff, mypy): the canary's path and the rule's
 // diagnostic must appear in the same block of consecutive non-empty lines.
@@ -241,7 +241,7 @@ function canary(rule, control, aggregate) {
   // A tool that echoes the offending source would "prove" any expected text taken from the canary itself.
   if (rule.canary.content.includes(rule.canary.expect ?? '[' + rule.id + ']')) return 'INVALID CANARY: the expected text appears in the canary itself; expect the tool\'s own diagnostic (a rule name or message the tool prints)'
   if (fs.existsSync(p)) return 'SKIPPED: canary path exists'
-  const command = rule.canary.check ?? rule.check ?? 'node scripts/ratchet-check.mjs'
+  const command = rule.canary.check ?? rule.check ?? 'node scripts/wellkept-check.mjs'
   const before = command === rule.check && control ? control : run(command)
   if (before.code !== 0) return 'SKIPPED: the check fails without the canary'
   // Some stacks only compile files in certain folders (src/bin, tests); create them for the canary and remove them after.
@@ -300,7 +300,7 @@ function verify() {
   const state = loadState(root)
   if (!state) {
     process.exitCode = 1
-    return { error: 'no .ratchet/state.json' }
+    return { error: 'no .wellkept/state.json' }
   }
   const files = listFiles(root)
   const byId = Object.fromEntries(ratchet(root, state, files).map((r) => [r.id, r]))
@@ -338,17 +338,19 @@ function verify() {
       r.allow = allowCanary(rule, control, aggregate)
       if (r.allow !== 'passes') ok = false
     } else if ((rule.kind === 'api' || rule.kind === 'boundary') && rule.check) {
-      r.allow = 'MISSING: an ' + rule.kind + ' rule needs an allow canary, an ordinary correct use (through the sanctioned helper, or across the boundary the legitimate way) that must pass'
+      r.allow = 'MISSING: ' + (rule.kind === 'api' ? 'an' : 'a') + ' ' + rule.kind + ' rule needs an allow canary, an ordinary correct use (through the sanctioned helper, or across the boundary the legitimate way) that must pass'
       ok = false
     }
     results.push(r)
   }
+  const declined = dueDeclines(root, state, files).map((d) => ({ ...d, due: 'revisitWhen applies: decide again (a rule, or a new decline with today\'s evidence)' }))
+  if (declined.length) ok = false
   if (!ok) process.exitCode = 1
-  return { head: head(), ok, rules: results }
+  return { head: head(), ok, rules: results, ...(declined.length ? { declined } : {}) }
 }
 
 // Files whose change can move a measurement or a rule: source, the prose rules come from, CI and tool config.
-const MEASURED = (f) => !!f && !f.startsWith('.ratchet/') && (/^\.github\/workflows\/|^\.gitlab-ci\.yml$/.test(f) || (!isSkipped(f) && (SOURCE_EXT.test(f) || PROSE.some((r) => r.test(f)) || /(^|\/)(package\.json|[\w.-]*config[\w.-]*\.\w+|\.?[\w-]*rc(\.\w+)?|[\w-]+\.gradle\.kts|libs\.versions\.toml|pyproject\.toml|Cargo\.toml|go\.mod)$/.test(f))))
+const MEASURED = (f) => !!f && !f.startsWith('.wellkept/') && (/^\.github\/workflows\/|^\.gitlab-ci\.yml$/.test(f) || (!isSkipped(f) && (SOURCE_EXT.test(f) || PROSE.some((r) => r.test(f)) || /(^|\/)(package\.json|[\w.-]*config[\w.-]*\.\w+|\.?[\w-]*rc(\.\w+)?|[\w-]+\.gradle\.kts|libs\.versions\.toml|pyproject\.toml|Cargo\.toml|go\.mod)$/.test(f))))
 
 function snapshot() {
   const state = loadState(root) ?? { version: 1, rules: [], declined: [], history: [] }
@@ -375,7 +377,7 @@ function snapshotBefore(state, rev) {
   if (!rev) return { error: 'snapshot --before <commit>' }
   const commit = git(['rev-parse', '--short', rev]).trim()
   const date = git(['show', '-s', '--format=%cs', commit]).trim()
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ratchet-before-'))
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wellkept-before-'))
   const stateFile = path.join(tmp, 'state.json')
   fs.writeFileSync(stateFile, JSON.stringify({ ...state, history: [] }))
   const tree = path.join(tmp, 'tree')
@@ -416,7 +418,7 @@ function report() {
 
 function tighten() {
   const state = loadState(root)
-  if (!state) return { error: 'no .ratchet/state.json' }
+  if (!state) return { error: 'no .wellkept/state.json' }
   const changed = {}
   for (const rule of state.rules ?? []) {
     if (!rule.probe || !rule.baseline) continue
@@ -437,7 +439,7 @@ function tighten() {
 function baseline(id) {
   const state = loadState(root)
   const rule = state?.rules?.find((r) => r.id === id)
-  if (!rule?.probe) return { error: 'no rule with a probe named ' + id + ' in .ratchet/state.json' }
+  if (!rule?.probe) return { error: 'no rule with a probe named ' + id + ' in .wellkept/state.json' }
   if (rule.baseline && !flag('raise')) return { error: id + ' already has a baseline; use tighten, or --raise --reason "..." to reset it (only with the user OK)' }
   const reasonAt = args.indexOf('--reason')
   if (rule.baseline && reasonAt === -1) return { error: 'a raise needs --reason "...": it is the record of a false positive or a deliberate exception' }
@@ -455,4 +457,4 @@ const commands = { inventory, measure: () => measure(), snapshot, verify, report
 const fn = commands[cmd]
 const result = fn ? fn() : null
 if (!fn || result?.error) process.exitCode = 1
-console.log(JSON.stringify(fn ? result : { usage: 'ratchet.mjs inventory | measure | snapshot [--before <commit>] | verify [--no-checks] | tighten | baseline <rule-id> [--raise --reason <why>] | report | foundation [--apply]' }, null, 1))
+console.log(JSON.stringify(fn ? result : { usage: 'wellkept.mjs inventory | measure | snapshot [--before <commit>] | verify [--no-checks] | tighten | baseline <rule-id> [--raise --reason <why>] | report | foundation [--apply]' }, null, 1))

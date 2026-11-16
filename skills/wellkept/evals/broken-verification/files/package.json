@@ -8,6 +8,6 @@
   "scripts": {
     "test": "node --test",
     "lint": "node scripts/lint.mjs",
-    "verify": "node --test && node scripts/ratchet-check.mjs"
+    "verify": "node --test && node scripts/wellkept-check.mjs"
   }
 }

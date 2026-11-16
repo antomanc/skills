@@ -10,7 +10,7 @@
       "enforcedBy": "scripts/lint.mjs",
       "check": "node scripts/lint.mjs",
       "canary": {
-        "path": "src/ratchet-canary-console.js",
+        "path": "src/wellkept-canary-console.js",
         "content": "console.log(\"x\")\n",
         "expect": "no-console"
       },
@@ -35,8 +35,8 @@
       "intent": "suppressions",
       "kind": "pattern",
       "message": "An exception names its rule and says why.",
-      "enforcedBy": "ratchet-check probe",
-      "check": "node scripts/ratchet-check.mjs",
+      "enforcedBy": "wellkept-check probe",
+      "check": "node scripts/wellkept-check.mjs",
       "probe": {
         "pattern": "^(?!.*(reason\\s*=|\\s--\\s+\\S|\\b(because|since|until|so that)\\b)).*(lint-disable|@ts-ignore)",
         "include": [
@@ -45,7 +45,7 @@
       },
       "baseline": {},
       "canary": {
-        "path": "src/ratchet-canary-suppression.js",
+        "path": "src/wellkept-canary-suppression.js",
         "content": "// lint-disable no-console\n",
         "expect": "[explained-suppressions]"
       },

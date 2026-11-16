@@ -6,11 +6,11 @@ Choosing a tool:
 
 1. **Prefer what the toolchain ships** (compiler flags, `cargo clippy`, `go vet`, .NET analyzers, `swift build -warnings-as-errors`).
 2. **Judge a third-party tool** on compatibility with the project, maintenance status, whether it can express the rule, and whether its version can be pinned. A stable tool with infrequent releases is fine. Look for a replacement when there is an actual compatibility or maintenance problem.
-3. **Prove it with a canary.** A rule counts only when `ratchet.mjs verify --aggregate` shows its canary failing with the rule's own diagnostic, through its check and through the verify command.
+3. **Prove it with a canary.** A rule counts only when `wellkept.mjs verify --aggregate` shows its canary failing with the rule's own diagnostic, through its check and through the verify command.
 
 Exceptions: prefer the form the tool can report as unused once the code is fixed (Rust `#[expect(lint, reason = "...")]`, TypeScript `@ts-expect-error` with a description, ESLint `reportUnusedDisableDirectives`), scoped to one line or item rather than moved into shared config, where the exception would cover more than it should.
 
-If no linter can express a rule, a `ratchet-check` probe can (a regex over lines, with per-file ceilings). It is weaker, so prefer a parser where one exists.
+If no linter can express a rule, a `wellkept-check` probe can (a regex over lines, with per-file ceilings). It is weaker, so prefer a parser where one exists.
 
 ## Rust
 | Intent | Example |
