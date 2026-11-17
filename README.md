@@ -8,42 +8,58 @@ npx skills add antomanc/skills --skill wellkept
 
 ## wellkept
 
-A well-kept codebase stays that way: every agent that works in it meets the same checks, and each check points to the right way to do things.
+**Keeps a codebase clean when most of the code is written by AI agents.** Any language, any framework.
 
-Makes a codebase one agents can be trusted in. It finds where agents produce slop (effects, timers, escape hatches, clock reads, cross-layer imports, rules that live only in prose), proposes a short plan, and turns each accepted item into a deterministic check: a lint rule, an architecture test, or a probe with a per-file ratchet, each with a canary that proves it fires for its own reason.
+### The idea
 
-On a new project, in any language, it starts with a foundation: a contract (`scripts/foundation.mjs`) of one verify command run in CI and six kinds of guardrail (strict compiler, escape hatches, nuance APIs such as effects and timers, dead code, tests, no inline suppressions), each a rule with a canary. The script checks the contract without knowing any tool; the agent picks the stack's current tools for each part (`references/stacks.md` has examples for Rust, Go, Python, TS, Kotlin, Swift, .NET, Dart), and the canaries prove the choice works.
+> "Nuance tends to lead to slop." (Lauren "poteto" Tan, AI Engineer Code)
 
-Run it again on the same project at any time. It checks that every guardrail still fires, lowers baselines as old occurrences go away, picks up new prose rules, and reports before/after trends once there is enough history. On an unchanged project a re-run changes nothing.
+When doing something right takes judgment, agents get it wrong. They copy the nearest example, take the shortest path that compiles, and talk their way around rules written in `AGENTS.md`. `useEffect` is the classic case: derived state, event handling and real syncing all look like an effect, so agents reach for it every time.
 
-State lives in `.wellkept/state.json` in the project. Probe rules are enforced in CI by `scripts/wellkept-check.mjs`, a dependency-free Node script the skill copies into the project.
+The fix is to take the decision away: give agents an **explicit alternative**, and add a **check that fails the build** when they use the raw thing. The error message tells them what to use instead. No LLM judging the code, just the compiler, the linter and the tests.
 
-Tests get the same treatment. Agents copy the tests they see, and a test written by the agent that wrote the code tends to restate it. wellkept measures mocks of the project's own modules, skips, sleeps and churning snapshots, prunes tests that pass with the behavior broken or fail when only the internals change (with the user's OK), and proves the tests that matter with a *mutation canary*: break the code, the named test must fail. Deleting a test file, removing assertions or adding a skip fails CI unless the commit says why.
+### What it does
 
-Every restriction comes with a sanctioned path, proven by an *allow canary* (a correct use that must pass), so a rule never leaves the agent with no right way to do something. Changes to the guardrails themselves fail CI unless the commit says why (`wellkept-check --against main` plus a `Wellkept-Change:` trailer).
+![The wellkept loop: look, plan, apply, run again](docs/loop.svg)
 
-### Does it help in the long run?
+1. **Look.** The agent works out what this project needs: which APIs get misused here, which fixes keep landing twice, which rules live only in prose, which tests prove nothing.
+2. **Plan.** At most 7 items, each with evidence from your repo. Nothing changes until you say yes.
+3. **Apply.** Each item becomes an alternative plus a deterministic check, made with the tools your project already has.
+4. **Run it again later.** It makes sure the checks still run, and looks for anything new. If nothing changed, it says so and touches nothing.
 
-We measured it. A small React shop app gets 5 feature tickets in a row (debounced search, cart, persisted query, a details panel with racing requests, a "recently viewed" list with live times). Sonnet agents do each ticket with no help, and hidden tests (14, including one for leaked timers) grade the result after every ticket. Four setups, same code and prompts:
+### From a rule in a doc to a check
 
-| Setup | Runs | Hidden tests at the end | Test files the agents wrote |
-| --- | --- | --- | --- |
-| A: nothing | 2 | 14/14 in both | 0 |
-| B: the same rules written in AGENTS.md | 2 | 14/14 in both | 0 |
-| C: guardrails from an early version of this skill | 2 | **13/14 in both: a leaked timer** | 0 |
-| **C″: guardrails from this version** | 4 | **14/14 in all 4** | 5–6 per run |
+![A rule in a doc versus a helper and a lint rule with a helpful message](docs/check.svg)
 
-What it shows:
-- **Bad guardrails cause bugs.** Version C banned timers with no sanctioned helper, so agents found a way around the rule, and both runs leaked a timer. That's why every restriction now needs an allow canary.
-- **Good guardrails don't, and they build a safety net.** C″ agents reused the sanctioned hooks, put every new hook behind a test (the verify command requires it), never edited a guardrail and used no suppressions. Without the skill, agents wrote no tests at all.
-- **It costs tokens.** C″ runs used about 1.3–2.5× the output tokens of A (median about 1.5×), mostly on the tests.
-- **What it doesn't show yet.** On this app, agents with no rules also wrote correct code, so this benchmark can't show fewer bugs than doing nothing. It shows the guardrails are safe to add and leave a growing test suite behind. A harder benchmark is next.
+- **No ban without an alternative.** An agent blocked with no right way to go finds a wrong one.
+- **Your tools, not ours.** Types first, then your linter or compiler options, then your architecture tool. A small script only when nothing else can express the rule.
+- **The error message is the instruction.** It names the alternative and says why, in one sentence.
+- **Tried once.** The agent writes a file that breaks the rule and checks it fails, and a correct use that passes.
+- **Exceptions are visible.** An inline disable has to name the rule and give a reason, enforced by the linter where it can.
 
-Based on Lauren "poteto" Tan's talk at AI Engineer Code ("nuance tends to lead to slop"): every correction should become a check, an API that hides the nuance, or a test, with prose as the last layer.
+### Tests: fewer, better
 
-## Development
+![Two imagined edits decide if a test is worth keeping](docs/tests.svg)
 
-`npm test` runs the scripts against throwaway git repositories, including every bug found in review so far.
+Agents copy tests too. A suite full of mocks and assertions that repeat the code teaches the next agent to write more of them. wellkept keeps tests that fail when the behavior breaks and survive a refactor, and proposes rewriting or deleting the rest (with your OK). New tests go through the public interface, with literal expected values, mocking only what the project doesn't own.
+
+### What ends up in your repo
+
+Just ordinary project files: a helper or two, rules in your linter config, a `verify` command that CI runs, and a few lines in `AGENTS.md`. No state files, no extra tooling to maintain. Remove the skill and everything keeps working.
+
+### Does it work?
+
+We measured an earlier, much heavier version of this skill on a small React app over 5 agent tickets. Two lessons shaped this version:
+
+- **A ban without an alternative causes bugs.** When timers were banned with no timer helper, agents hid a polling loop somewhere else and leaked a timer in both runs. With helpers in place, all 4 runs passed every hidden test.
+- **Heavy machinery costs more than it returns.** Proving every check over and over (stored canaries, snapshots, reports) cost 1.3 to 2.5 times the tokens and filled real repos with bookkeeping commits. In two real projects the value came from the audit (it found real bugs) and from a few lint rules, so that is what this version keeps.
+
+What isn't shown yet: whether, over months of agent work, a repo with wellkept stays cleaner than one without. If you try it, issues with before/after examples are very welcome.
+
+### When not to use it
+
+- A throwaway prototype.
+- A repo already in good shape. wellkept should say so and change little; if it proposes rules without evidence from your repo, that's a bug.
 
 ## License
 

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="300" viewBox="0 0 860 300" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+  <rect width="860" height="300" rx="14" fill="#f8fafc"/>
+  <text x="30" y="38" font-size="18" font-weight="600" fill="#0f172a">A rule in a doc can be ignored. A check can't.</text>
+  <defs><marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#64748b"/></marker></defs>
+  <g font-size="14">
+    <rect x="30" y="64" width="230" height="200" rx="10" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="145" y="92" text-anchor="middle" font-weight="600" fill="#7f1d1d">Before</text>
+    <text x="48" y="122" fill="#0f172a">AGENTS.md:</text>
+    <text x="48" y="144" fill="#0f172a" font-style="italic">"don't read the clock</text>
+    <text x="48" y="164" fill="#0f172a" font-style="italic">directly in components"</text>
+    <text x="48" y="200" fill="#0f172a">The agent didn't read it,</text>
+    <text x="48" y="220" fill="#0f172a">or decided this case was</text>
+    <text x="48" y="240" fill="#0f172a">an exception.</text>
+    <rect x="310" y="64" width="520" height="200" rx="10" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="570" y="92" text-anchor="middle" font-weight="600" fill="#14532d">After</text>
+    <text x="330" y="124" fill="#0f172a"><tspan font-weight="600">Helper</tspan>  useNow() — the easy, right way to do it</text>
+    <text x="330" y="152" fill="#0f172a"><tspan font-weight="600">Check</tspan>  Date.now() in a component fails the build with:</text>
+    <text x="350" y="172" fill="#166534" font-family="ui-monospace, Menlo, monospace" font-size="12.5">"Read time through useNow(); a component that reads</text>
+    <text x="350" y="190" fill="#166534" font-family="ui-monospace, Menlo, monospace" font-size="12.5"> the clock can't be tested at midnight"</text>
+    <text x="330" y="220" fill="#0f172a"><tspan font-weight="600">Tried once</tspan>  a wrong file fails with that message,</text>
+    <text x="412" y="244" fill="#0f172a">a correct use through useNow() passes</text>
+    <line x1="262" y1="164" x2="306" y2="164" stroke="#64748b" stroke-width="2" marker-end="url(#b)"/>
+  </g>
+  <text x="430" y="288" text-anchor="middle" font-size="13" fill="#475569">Old code: fixed if cheap, otherwise the linter's own baseline, so only new code is blocked.</text>
+</svg>

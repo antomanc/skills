@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="330" viewBox="0 0 860 330" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+  <rect width="860" height="330" rx="14" fill="#f8fafc"/>
+  <text x="30" y="38" font-size="18" font-weight="600" fill="#0f172a">Is this test worth keeping? Imagine two changes to the code.</text>
+  <g font-size="14">
+    <text x="535" y="74" text-anchor="middle" font-weight="600" fill="#334155">You break what the code does (wrong value, step skipped)</text>
+    <text x="395" y="98" text-anchor="middle" fill="#334155">the test fails</text>
+    <text x="675" y="98" text-anchor="middle" fill="#334155">the test still passes</text>
+    <text x="30" y="140" fill="#334155" font-weight="600">You only rewrite</text>
+    <text x="30" y="160" fill="#334155" font-weight="600">the insides</text>
+    <text x="30" y="180" fill="#334155">(same results)</text>
+    <text x="248" y="155" text-anchor="end" fill="#334155">test passes</text>
+    <text x="248" y="245" text-anchor="end" fill="#334155">test fails</text>
+    <rect x="260" y="110" width="270" height="80" rx="8" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="395" y="145" text-anchor="middle" font-weight="600" fill="#14532d">KEEP</text>
+    <text x="395" y="167" text-anchor="middle" fill="#0f172a">catches bugs, survives refactors</text>
+    <rect x="540" y="110" width="270" height="80" rx="8" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="675" y="145" text-anchor="middle" font-weight="600" fill="#7f1d1d">DELETE OR REWRITE</text>
+    <text x="675" y="167" text-anchor="middle" fill="#0f172a">proves nothing: green by construction</text>
+    <rect x="260" y="200" width="270" height="80" rx="8" fill="#fef9c3" stroke="#ca8a04"/>
+    <text x="395" y="235" text-anchor="middle" font-weight="600" fill="#713f12">REWRITE</text>
+    <text x="395" y="257" text-anchor="middle" fill="#0f172a">right idea, tied to how the code is split</text>
+    <rect x="540" y="200" width="270" height="80" rx="8" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="675" y="235" text-anchor="middle" font-weight="600" fill="#7f1d1d">DELETE</text>
+    <text x="675" y="257" text-anchor="middle" fill="#0f172a">all cost, no protection</text>
+  </g>
+  <text x="430" y="312" text-anchor="middle" font-size="13" fill="#475569">And a test that contradicts the task is a conflict to report, never an assertion to edit.</text>
+</svg>
