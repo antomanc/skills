@@ -1,6 +1,9 @@
 ---
 name: wellkept
 description: Make a codebase in any language or framework harder for AI agents to fill with slop. Finds what agents get wrong in this project (effects and reactivity, timers, clock reads, escape hatches, swallowed errors, cross-layer imports, workaround comments, tests that prove nothing), gives each one an explicit alternative, and enforces it with a deterministic check in the project's own tools whose error message says what to use instead. Use when asked to harden a repo for agents, audit it for agent slop, turn AGENTS.md or coding-standard rules into lint rules, ban an API like useEffect, or check a project again later.
+license: MIT
+metadata:
+  tags: "code-quality, linting, ai-agents, slop, guardrails, refactoring, testing, any-language"
 ---
 
 # wellkept
