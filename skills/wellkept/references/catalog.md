@@ -13,6 +13,25 @@ What `wellkept.mjs measure` counts, why each is a nuance trap, and how to enforc
 | `justification-comments` | Comments explaining why a shortcut is fine are how shortcuts spread. | Fix the cause and delete the comment, or turn the reason into a check. |
 | `todos` | Promises nobody tracks. | An issue, or delete it. |
 
+## Tests
+
+What `measure` reports under `tests`, and what to do with it. Counts point to files; the two edits (break the behavior, change the internals) decide.
+
+| Signal | Why it is slop | Usual fix |
+| --- | --- | --- |
+| `mocks` | A mock of the project's own module pins the test to how the code is split today: every refactor breaks it, no bug does. Mocks of what the project doesn't own (HTTP, clock, payment SDK) are fine. | Test through the public interface; pass the outside dependency in and give a fake there. A real local stand-in beats a mock for the database (PGlite, SQLite, testcontainers) and the filesystem (a temp dir, memfs). |
+| `skips` | `.only` silently turns off the rest of the suite; a skipped test hides a broken behavior and gets copied. | Fix or delete. Where a skip is legitimate (a platform-only test), it says why on the line, like any suppression. |
+| `sleeps` | A fixed wait in a test is a race with a timeout: flaky on slow CI, slow everywhere. | Await the observable change (`findBy*`, `waitFor`, polling with a deadline) or use the fake clock. |
+| `snapshots.churn` | A snapshot rewritten in many commits is regenerated on a red build, not read. Large ones serialize whole props or config objects, so every unrelated change rewrites them. | Assert the few rendered fields that matter, or keep a small inline snapshot of the output only. |
+| tautologies (read, not probed) | `expect(add(a, b)).toBe(a + b)`, expected values from the code under test, assertions on data the test built: they pass by construction. | Literal expected values from the requirement, or a property-based test. |
+| source-reading tests (read, not probed) | A test that reads a source file to check its text is a lint rule that runs late and says less. | A lint rule or a `wellkept-check` probe with a message. |
+
+Test guard (`state.tests`): the defaults cover common runners (Jest/Vitest/node:test, pytest/unittest, Go, Rust, JUnit/Kotest, XCTest/Swift Testing, RSpec-style). Tune `include` to the project's layout and `assert`/`skip` to its assertion library when the counts look wrong.
+
+Behavior canaries: pick a mutation a real bug would make (flip a comparison, drop an item, return early, double an effect), in the code the test claims to protect. `expect` is the runner's failure line for that test (node:test `✖ name`, Jest/Vitest `✕ name` or `FAIL`, pytest `FAILED path::name`, Go `--- FAIL: TestName`, cargo `test name ... FAILED`, JUnit/Gradle `name FAILED`). A nested test runner may change its reporter or exit code under a parent runner (node:test reads `NODE_TEST_CONTEXT`); run the check the way CI does.
+
+Mutation tools (Stryker, PIT, mutmut, cargo-mutants, go-mutesting) do this at scale. Worth it on the files a change touches, for the logic that matters; not as a whole-repo gate.
+
 Committed generated files (fixtures, snapshots, generated clients, lockfile-like data): if a script regenerates them, CI should regenerate and fail on a diff. A doc line saying "the committed X can lag" is this check missing.
 
 Comment ratio: a high ratio is not a finding by itself. Look at what comments say. Domain "why" comments are fine; a comment that holds examples of inputs ("14- oz . can") is a test case in disguise; a comment that restates the code or defends a workaround should go.

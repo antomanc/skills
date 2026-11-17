@@ -169,7 +169,7 @@ test('suppressions without a reason fail in every language; explained ones pass;
 test('the contract holds when every area is decided, verify is recorded, CI runs the exact command and AGENTS.md says so', () => {
   const rule = (intent) => ({ id: intent, intent, check: 'true', canary: { path: 'c-' + intent, content: 'x' } })
   const files = {
-    '.wellkept/state.json': { version: 1, verify: 'make lint && make test', rules: ['compiler', 'escape-hatches', 'nuance-apis', 'tests', 'suppressions'].map(rule), declined: [{ intent: 'dead-code', reason: 'the compiler already rejects unused code' }], history: [] },
+    '.wellkept/state.json': { version: 1, verify: 'make lint && make test', tests: {}, rules: ['compiler', 'escape-hatches', 'nuance-apis', 'tests', 'suppressions'].map(rule), declined: [{ intent: 'dead-code', reason: 'the compiler already rejects unused code' }], history: [] },
     '.github/workflows/ci.yml': 'jobs:\n  v:\n    steps:\n      - run: make lint &&   make test\n',
     'AGENTS.md': '<!-- wellkept:start -->\n<!-- wellkept:end -->\n'
   }
@@ -258,4 +258,58 @@ test('a declined finding whose revisitProbe matches is reported as due, not left
   const c = run(dir, CHECK)
   assert.equal(c.code, 0, 'a due decline warns in CI but does not block unrelated work')
   assert.match(c.out, /declined \[clock-reads\] is due for review/)
+})
+
+test('--against: deleted test files, removed assertions and new skips need a declared reason', () => {
+  const t = "import { test } from 'node:test'\nimport assert from 'node:assert'\ntest('adds', () => {\n  assert.equal(1 + 1, 2)\n  assert.equal(2 + 2, 4)\n})\n"
+  const dir = repo({ 'src/a.test.js': t, 'src/b.test.js': t, '.wellkept/state.json': { version: 1, rules: [], tests: {}, history: [] } })
+  git(dir, 'tag', 'main')
+  write(dir, 'src/a.test.js', t.replace('  assert.equal(2 + 2, 4)\n', '')); commit(dir, 'drop an assertion')
+  let r = run(dir, CHECK, '--against', 'main')
+  assert.equal(r.code, 1)
+  assert.match(r.out, /src\/a\.test\.js: assertions 2 -> 1/)
+  write(dir, 'src/a.test.js', t)
+  write(dir, 'src/b.test.js', t.replace("test('adds'", "test.skip('adds'")); commit(dir, 'skip')
+  r = run(dir, CHECK, '--against', 'main')
+  assert.match(r.out, /src\/b\.test\.js: tests switched off/)
+  write(dir, 'src/b.test.js', t)
+  fs.rmSync(path.join(dir, 'src/a.test.js')); commit(dir, 'delete')
+  r = run(dir, CHECK, '--against', 'main')
+  assert.equal(r.code, 1)
+  assert.match(r.out, /test file deleted: src\/a\.test\.js \(2 assertions\)/)
+  git(dir, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'Prune\n\nWellkept-Change: a.test.js only restated the implementation')
+  assert.equal(run(dir, CHECK, '--against', 'main').code, 0)
+  write(dir, 'src/a.test.js', t + t.replace("'adds'", "'adds again'")); commit(dir, 'more tests')
+  r = run(dir, CHECK, '--against', 'main')
+  assert.equal(r.code, 0, 'adding tests and assertions is ordinary work: ' + r.out)
+})
+
+test('a behavior canary is a mutation: the named test must fail when the code breaks, and the code is restored', () => {
+  const src = 'export const total = (items) => items.reduce((s, i) => s + i.price, 0)\n'
+  const good = "import { test } from 'node:test'\nimport assert from 'node:assert'\nimport { total } from './price.mjs'\ntest('total adds prices', () => assert.equal(total([{ price: 10 }, { price: 5 }]), 15))\n"
+  const tautology = "import { test } from 'node:test'\nimport assert from 'node:assert'\nimport { total } from './price.mjs'\ntest('total adds prices', () => { const items = [{ price: 10 }]; assert.equal(total(items), total(items)) })\n"
+  const rule = { id: 'total', kind: 'behavior', message: 'm', check: 'env -u NODE_TEST_CONTEXT node --test', canary: { mutate: { path: 'src/price.mjs', find: 's + i.price', replace: 's - i.price' }, expect: '✖ total adds prices' } }
+  const dir = repo({ 'src/price.mjs': src, 'src/price.test.mjs': good, ...state([rule]) })
+  let r = run(dir, CLI, 'verify')
+  assert.equal(r.json.rules[0].canary, 'fires', r.out)
+  assert.equal(fs.readFileSync(path.join(dir, 'src/price.mjs'), 'utf8'), src)
+  write(dir, 'src/price.test.mjs', tautology)
+  r = run(dir, CLI, 'verify')
+  assert.match(r.json.rules[0].canary, /DOES NOT FIRE/)
+  assert.equal(r.code, 1)
+  const s = JSON.parse(fs.readFileSync(path.join(dir, '.wellkept/state.json'), 'utf8'))
+  s.rules[0].canary.expect = 'total adds prices'
+  fs.writeFileSync(path.join(dir, '.wellkept/state.json'), JSON.stringify(s))
+  write(dir, 'src/price.test.mjs', good)
+  assert.match(run(dir, CLI, 'verify').json.rules[0].canary, /INVALID CANARY/, 'a test name printed on success is not proof of failure')
+})
+
+test('measure reports test mocks, skips, sleeps and snapshots that keep changing', () => {
+  const dir = repo({ 'src/a.ts': 'x\n', 'src/a.test.ts': "vi.mock('./a')\nit.skip('x', async () => { await new Promise((r) => setTimeout(r, 50)) })\nvi.mock('axios')\n", 'src/__snapshots__/a.test.ts.snap': 'v0\n' })
+  for (let i = 1; i <= 3; i++) { write(dir, 'src/__snapshots__/a.test.ts.snap', 'v' + i + '\n'); commit(dir, 'regen ' + i) }
+  const m = run(dir, CLI, 'measure').json.tests
+  assert.equal(m.probes.mocks.total, 1, 'mocking a package is not mocking your own module')
+  assert.equal(m.probes.skips.total, 1)
+  assert.equal(m.probes.sleeps.total, 1)
+  assert.match(m.snapshots.churn[0], /a\.test\.ts\.snap: 2 lines, changed in [34] of the last 40 commits/)
 })

@@ -30,7 +30,7 @@ export const INTENTS = {
   'escape-hatches': 'Which ways around the type system are allowed (any, forced unwraps and casts, unsafe), and where.',
   'nuance-apis': 'Which APIs this codebase has seen misused or expects to (effects, timers, threads, clock reads), and the helpers that replace them.',
   'dead-code': 'Whether unused code, exports and dependencies fail the build.',
-  'tests': 'The test command; a failing test fails verify.',
+  'tests': 'The test command, a failing test fails verify, and which tests are worth having here: through public interfaces, mocks only for what the project does not own.',
   'suppressions': 'How exceptions to checks are written: narrow, with a reason, reviewed, and reported when no longer needed where the tool supports it.'
 }
 
@@ -84,6 +84,7 @@ if (argv.includes('--apply')) {
       added: new Date().toISOString().slice(0, 10)
     })
   }
+  if (!state.tests) state.tests = {}
   save()
   if (state.verify) {
     const agentsFile = exists('AGENTS.md') ? 'AGENTS.md' : exists('CLAUDE.md') ? 'CLAUDE.md' : 'AGENTS.md'
@@ -93,6 +94,8 @@ if (argv.includes('--apply')) {
       '- ' + bt(state.verify) + ' runs every check. Run it before calling work done; CI runs the same command.',
       '- A failing check says what to do instead. Fix the cause; an exception names the rule and says why on the same line.',
       '- A mistake corrected twice becomes a check in ' + bt('.wellkept/state.json') + ', not a new line here.',
+      '- If a test contradicts the task, stop and report the conflict. Never change an expected value, skip a test or regenerate a snapshot to get a green build.',
+      '- A new test drives the public interface with a concrete input and a literal expected value, and mocks only what the project does not own (network, clock, third-party APIs). No test is better than one that cannot fail.',
       ...(exists('docs/agents/feature-map.md') || argv.includes('--app') ? ['- ' + bt('docs/agents/feature-map.md') + ' names every screen and control with the code behind it; keep it current.'] : []),
       '<!-- wellkept:end -->'
     ].join('\n')
@@ -104,7 +107,7 @@ if (argv.includes('--apply')) {
   }
   if (argv.includes('--app') && !exists('docs/agents/feature-map.md')) {
     fs.mkdirSync(path.join(root, 'docs/agents'), { recursive: true })
-    fs.writeFileSync(path.join(root, 'docs/agents/feature-map.md'), '# Feature map\n\nWhat a user sees, with the names to use for it and the code behind it. A new screen, control or dialog gets a row in the same change.\n\n| Name | What it is | How to reach it | Code |\n| --- | --- | --- | --- |\n')
+    fs.writeFileSync(path.join(root, 'docs/agents/feature-map.md'), '# Feature map\n\nWhat a user sees, with the names to use for it and the code behind it. A new screen, control or dialog gets a row in the same change.\n\n## Run it\n\n- Launch: the one command that starts the app with seed data, and its port or device.\n- Health: a read-only check that the running app is the one just built and is ready (fix the environment before the code when this fails).\n- Drive: how to operate it as a user (browser automation with stable labels, CLI subcommands, HTTP calls).\n- Evidence: what to keep to show a feature works (screenshot, response, database row) and where it goes.\n\n## Features\n\n| Name | What it is | How to reach it | Code |\n| --- | --- | --- | --- |\n')
     changed.push('docs/agents/feature-map.md')
   }
 }
@@ -126,11 +129,12 @@ const result = {
   stacks,
   verify: state.verify ?? 'missing: pick the one command that runs every check, then --verify "<command>"',
   ci: !workflows.length ? 'missing' : state.verify && squash(ciText).includes(squash(state.verify)) ? 'runs verify' : 'present, does not run the exact verify command',
+  testGuard: state.tests ? 'present: deleted test files, removed assertions and new skips need a Wellkept-Change reason' : declined.has('tests') ? 'declined' : 'missing: --apply adds state.tests',
   agentsBlock: /<!-- wellkept:start -->/.test((read('AGENTS.md') ?? '') + (read('CLAUDE.md') ?? '')) ? 'present' : 'missing',
   intents,
   incompleteRules: state.rules.filter((r) => !complete(r)).map((r) => r.id),
   next: 'decide each undecided area with the user: rules (each with a check and a canary) or a declined entry with intent and reason; then wellkept.mjs verify --aggregate proves verify runs every rule'
 }
-const missing = Object.values(intents).some((i) => i.status === 'undecided') || !state.verify || result.ci !== 'runs verify' || result.agentsBlock !== 'present' || result.incompleteRules.length
+const missing = Object.values(intents).some((i) => i.status === 'undecided') || result.testGuard.startsWith('missing') || !state.verify || result.ci !== 'runs verify' || result.agentsBlock !== 'present' || result.incompleteRules.length
 if (missing && !argv.includes('--apply') && !verifyArg) process.exitCode = 1
 console.log(JSON.stringify(argv.includes('--apply') || verifyArg ? { changed, ...result } : result, null, 1))

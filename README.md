@@ -18,6 +18,8 @@ Run it again on the same project at any time. It checks that every guardrail sti
 
 State lives in `.wellkept/state.json` in the project. Probe rules are enforced in CI by `scripts/wellkept-check.mjs`, a dependency-free Node script the skill copies into the project.
 
+Tests get the same treatment. Agents copy the tests they see, and a test written by the agent that wrote the code tends to restate it. wellkept measures mocks of the project's own modules, skips, sleeps and churning snapshots, prunes tests that pass with the behavior broken or fail when only the internals change (with the user's OK), and proves the tests that matter with a *mutation canary*: break the code, the named test must fail. Deleting a test file, removing assertions or adding a skip fails CI unless the commit says why.
+
 Every restriction comes with a sanctioned path, proven by an *allow canary* (a correct use that must pass), so a rule never leaves the agent with no right way to do something. Changes to the guardrails themselves fail CI unless the commit says why (`wellkept-check --against main` plus a `Wellkept-Change:` trailer).
 
 ### Does it help in the long run?

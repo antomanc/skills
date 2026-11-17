@@ -73,6 +73,42 @@ export function matchProbe(root, files, probe) {
   return hits
 }
 
+// What a test file, an assertion and a disabled test look like. Text, not syntax, across common languages,
+// so the gate works before any tool is chosen; a project tunes it in state.tests.
+export const TEST_DEFAULTS = {
+  include: ['**/test/**', '**/tests/**', '**/__tests__/**', '**/*.test.*', '**/*.spec.*', '**/*_test.*', '**/test_*.py', '**/*Test.kt', '**/*Test.java', '**/*Tests.swift', '**/androidTest/**', '**/e2e/**'],
+  exclude: ['**/node_modules/**', '**/__snapshots__/**', '**/*.snap', '**/fixtures/**', '**/testdata/**'],
+  assert: '\\bexpect\\s*[(!.]|\\bassert(_\\w+|[A-Z]\\w*)?!?(?!\\s+from\\b)\\s*[(\\s]|#expect\\(|\\bXCTAssert\\w*\\s*\\(|\\bt\\.(Error|Errorf|Fatal|Fatalf|Fail|FailNow)\\b|\\b(require|assert)\\.\\w+\\s*\\(|\\.should\\b',
+  skip: '\\.(only|skip|todo)\\s*\\(|\\b[xf](it|describe|test|context)\\s*\\(|@pytest\\.mark\\.(skip|skipif|xfail)\\b|\\bpytest\\.skip\\(|@unittest\\.skip|\\bt\\.Skip(Now|f)?\\(|#\\[ignore\\b|@Ignore\\b|@Disabled\\b|\\bXCTSkip|\\bpending\\s*\\('
+}
+
+const count = (text, re) => text == null ? 0 : text.split('\n').reduce((n, l) => n + (l.match(re) ?? []).length, 0)
+
+/** Test files deleted, assertions removed and tests switched off since <ref>: the ways a check is weakened to get a green build. */
+export function testChanges(root, ref, tests) {
+  const cfg = { ...TEST_DEFAULTS, ...tests }
+  const inc = cfg.include.map(globToRegExp), exc = cfg.exclude.map(globToRegExp)
+  const isTest = (f) => inc.some((r) => r.test(f)) && !exc.some((r) => r.test(f))
+  const assertRe = new RegExp(cfg.assert, 'g'), skipRe = new RegExp(cfg.skip, 'g')
+  const git = (a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', maxBuffer: 1 << 28 })
+  const old = (f) => { try { return git(['show', ref + ':' + f]) } catch { return null } }
+  const changes = []
+  const rows = git(['diff', '--name-status', '-M', ref, '--']).split('\n').filter(Boolean).map((l) => l.split('\t'))
+  const untracked = git(['ls-files', '-o', '--exclude-standard']).split('\n').filter(Boolean).map((f) => ['A', f])
+  for (const [status, a, b] of [...rows, ...untracked]) {
+    const before = a, after = status.startsWith('R') ? b : a
+    if (!isTest(before) && !isTest(after)) continue
+    if (status === 'D' || (status.startsWith('R') && !isTest(after))) { changes.push('test file deleted: ' + before + ' (' + count(old(before), assertRe) + ' assertions)'); continue }
+    const was = status === 'A' ? '' : old(before)
+    const now = readText(root, after)
+    const [a0, a1] = [count(was, assertRe), count(now, assertRe)]
+    const [s0, s1] = [count(was, skipRe), count(now, skipRe)]
+    if (a1 < a0) changes.push(after + ': assertions ' + a0 + ' -> ' + a1)
+    if (s1 > s0) changes.push(after + ': tests switched off or focused (skip/only/ignore) ' + s0 + ' -> ' + s1)
+  }
+  return changes
+}
+
 export function statePath(root) {
   return path.join(root, '.wellkept', 'state.json')
 }
@@ -130,6 +166,8 @@ export function enforcementChanges(root, ref) {
     for (const k of ['check', 'probe']) if (JSON.stringify(o[k]) !== JSON.stringify(n[k])) changes.push(o.id + ': ' + k + ' changed')
     for (const [f, c] of Object.entries(n.baseline ?? {})) if (c > (o.baseline?.[f] ?? 0)) changes.push(o.id + ': ceiling raised for ' + f + ' (' + (o.baseline?.[f] ?? 0) + ' -> ' + c + ')')
   }
+  if (old.tests && JSON.stringify(old.tests) !== JSON.stringify(now.tests)) changes.push('test guard settings changed (state.tests)')
+  if (now.tests) for (const c of testChanges(root, ref, now.tests)) changes.push(c)
   const protectedFiles = [...new Set([...(old.protected ?? []), ...(now.protected ?? [])])]
   if (protectedFiles.length) {
     const diff = git(['diff', '--name-only', ref, '--', ...protectedFiles]).split('\n').filter(Boolean)
@@ -149,7 +187,7 @@ function main() {
       const trailer = msg.match(/^Wellkept-Change:\s*(.+)$/m)
       for (const c of changes) console.error('wellkept-check: enforcement change since ' + ref + ': ' + c)
       if (!trailer) {
-        console.error('wellkept-check: these weaken or alter guardrails. If intended, say why in the commit with a "Wellkept-Change: <reason>" trailer, for review.')
+        console.error('wellkept-check: these weaken or alter guardrails. If a test contradicts the task, stop and report the conflict instead of changing it. If the change is intended (behavior that really changed, a test pruned on purpose), say why in the commit with a "Wellkept-Change: <reason>" trailer, for review.')
         return 1
       }
       console.log('wellkept-check: enforcement change declared: ' + trailer[1])

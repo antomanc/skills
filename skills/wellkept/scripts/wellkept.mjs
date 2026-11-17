@@ -5,6 +5,7 @@
 //   snapshot             measure + git metrics, saved in .wellkept/state.json history (one entry per commit)
 //   snapshot --before <commit>  measure the project as it was before the changes, kept as the first snapshot
 //   verify [--no-checks] run each rule's check, prove each canary fails for its own reason; exits 1 on any failure
+//                        (a behavior rule's canary is a mutation: break the code, the named test must fail)
 //   verify --aggregate   also prove the recorded verify command fails on each canary (it really runs every rule)
 //   tighten              lower every rule's per-file baseline to today's counts (never raises)
 //   baseline <rule-id>   set a new rule's baseline to today's counts
@@ -13,7 +14,7 @@ import { execFileSync, execSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { repoRoot, listFiles, readText, matchProbe, loadState, statePath, ratchet, dueDeclines, globToRegExp } from './wellkept-check.mjs'
+import { repoRoot, listFiles, readText, matchProbe, loadState, statePath, ratchet, dueDeclines, globToRegExp, TEST_DEFAULTS } from './wellkept-check.mjs'
 
 const root = repoRoot()
 const [cmd, ...args] = process.argv.slice(2)
@@ -52,6 +53,36 @@ const PROBES = [
   { id: 'justification-comments', ext: SOURCE_EXT, re: /^\s*(\/\/|#|\*|\/\*).*\b(workaround|hack|for now|temporar|quick fix|band-?aid|not ideal|ugly|kludge|needed because|otherwise .* (breaks|fails))/i },
   { id: 'todos', ext: SOURCE_EXT, re: /\b(TODO|FIXME|HACK|XXX)\b/ }
 ]
+// Test probes: where a suite tends to fill with tests that pass by construction or break on every refactor.
+// mocks counts module mocks by relative path in JS (your own modules) and every patch/mock call elsewhere: read them.
+const TEST_PROBES = [
+  { id: 'mocks', re: /\b(jest|vi)\.(mock|doMock)\(\s*['"`]\.{1,2}\/|\bmock\.patch(\.object)?\(|@patch\(|\bmockk[<(]|\bMockito\.|\bmock\(\s*\w+::class|\bgomock\.|\bsinon\.(stub|mock)\(|\bspyOn\(/ },
+  { id: 'skips', re: new RegExp(TEST_DEFAULTS.skip) },
+  { id: 'sleeps', re: /\bsetTimeout\s*\(|\b(Thread\.sleep|time\.sleep|asyncio\.sleep|sleep|delay)\s*\(\s*[\d.]|\bwaitForTimeout\s*\(/ }
+]
+const SNAPSHOT = /\.(snap|ambr)$|(^|\/)__snapshots__\//
+
+function measureTests(files) {
+  const tests = files.filter((f) => !isSkipped(f) && isTest(f) && SOURCE_EXT.test(f))
+  let lines = 0
+  for (const f of tests) lines += (readText(root, f) ?? '').split('\n').filter((l) => l.trim()).length
+  const probes = {}
+  for (const p of TEST_PROBES) {
+    const hits = matchProbe(root, tests, { pattern: p.re.source, flags: p.re.flags })
+    const per = Object.entries(hits).map(([f, l]) => [f, l.length]).sort((a, b) => b[1] - a[1])
+    probes[p.id] = { total: per.reduce((n, [, c]) => n + c, 0), top: per.slice(0, 6).map(([f, n]) => f + ' ' + n) }
+  }
+  // Snapshots rewritten again and again are usually regenerated on a red build, not read.
+  const snaps = files.filter((f) => SNAPSHOT.test(f) && !isSkipped(f))
+  const snapLines = Object.fromEntries(snaps.map((f) => [f, (readText(root, f) ?? '').split('\n').length]))
+  const changes = {}
+  try {
+    for (const f of git(['log', '-n', '40', '--format=', '--name-only']).split('\n')) if (f in snapLines) changes[f] = (changes[f] ?? 0) + 1
+  } catch {}
+  const churn = Object.entries(changes).filter(([, n]) => n >= 3).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([f, n]) => f + ': ' + snapLines[f] + ' lines, changed in ' + n + ' of the last 40 commits')
+  return { files: tests.length, lines, probes, snapshots: { files: snaps.length, lines: Object.values(snapLines).reduce((a, b) => a + b, 0), churn } }
+}
+
 const COMMENT = /^\s*(\/\/|\/\*|\*(?!\*)|\*\/|<!--|#(?!\[|!|include|define|if|endif|else|pragma|import))/
 
 function sourceFiles(files) {
@@ -85,7 +116,7 @@ function measure(files = listFiles(root)) {
   const stateFlag = args.indexOf('--state')
   const state = stateFlag !== -1 ? JSON.parse(fs.readFileSync(args[stateFlag + 1], 'utf8')) : loadState(root)
   const rules = state ? Object.fromEntries(ratchet(root, state, files).map((r) => [r.id, r.total])) : {}
-  const out = { sourceFiles: src.length, sourceLines: lines, commentLines: comments, commentRatio: +(comments / Math.max(lines, 1)).toFixed(3), testFiles: tests, probes: {}, rules }
+  const out = { sourceFiles: src.length, sourceLines: lines, commentLines: comments, commentRatio: +(comments / Math.max(lines, 1)).toFixed(3), testFiles: tests, tests: measureTests(files), probes: {}, rules }
   for (const [id, e] of Object.entries(probes)) {
     out.probes[id] = { total: e.total, top: Object.entries(e.files).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([f, n]) => f + ' ' + n) }
   }
@@ -236,7 +267,42 @@ function names(output, file, expect) {
   return lines.some((l, i) => l.includes(file) && block(i).some((x) => x.includes(expect)))
 }
 
+// A behavior rule's canary breaks the code instead of adding a file: replace `find` (exactly once) in `path`
+// and the check must fail with `expect`, text only a failure prints ("not ok 3 - total adds line items",
+// "FAIL src/cart.test.ts > total"), so a passing run that merely lists test names is not proof.
+// A test that still passes with the behavior broken proves nothing.
+function mutation(rule, control, aggregate) {
+  const { path: file, find, replace } = rule.canary.mutate
+  const expect = rule.canary.expect
+  if (!expect) return 'INVALID CANARY: a mutation needs expect, text the failing test prints'
+  const p = path.join(root, file)
+  const text = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null
+  if (text == null) return 'SKIPPED: ' + file + ' does not exist'
+  const n = text.split(find).length - 1
+  if (n !== 1) return 'SKIPPED: the mutation must match exactly once in ' + file + ', found ' + n
+  const command = rule.canary.check ?? rule.check
+  const before = command === rule.check && control ? control : run(command)
+  if (before.code !== 0) return 'SKIPPED: the check fails without the mutation'
+  if (before.output.includes(expect)) return 'INVALID CANARY: ' + expect + ' is printed when the check passes; expect text only the failure prints'
+  fs.writeFileSync(p, text.replace(find, () => replace))
+  try {
+    const c = run(command)
+    if (c.code === 0) return 'DOES NOT FIRE: the tests pass with the behavior broken'
+    if (!c.output.includes(expect)) return 'FAILS FOR ANOTHER REASON: ' + expect + ' is not in the output'
+    if (aggregate) {
+      const v = run(aggregate)
+      if (v.code === 0) return 'VERIFY DOES NOT RUN IT: ' + aggregate + ' passed with the behavior broken'
+      if (!v.output.includes(expect)) return 'fires; verify blocks it, but an earlier check fails first, so this does not show verify runs the test'
+      return 'fires, also through verify'
+    }
+    return 'fires'
+  } finally {
+    fs.writeFileSync(p, text)
+  }
+}
+
 function canary(rule, control, aggregate) {
+  if (rule.canary.mutate) return mutation(rule, control, aggregate)
   const p = path.join(root, rule.canary.path)
   // A tool that echoes the offending source would "prove" any expected text taken from the canary itself.
   if (rule.canary.content.includes(rule.canary.expect ?? '[' + rule.id + ']')) return 'INVALID CANARY: the expected text appears in the canary itself; expect the tool\'s own diagnostic (a rule name or message the tool prints)'
@@ -412,6 +478,7 @@ function report() {
     probes, rules,
     comments: { from: first.metrics.commentRatio, to: now.commentRatio },
     testFiles: { from: first.metrics.testFiles, to: now.testFiles },
+    tests: Object.fromEntries([['lines', (m) => m.tests?.lines], ['mocks', (m) => m.tests?.probes.mocks.total], ['skips', (m) => m.tests?.probes.skips.total], ['sleeps', (m) => m.tests?.probes.sleeps.total], ['snapshotLines', (m) => m.tests?.snapshots.lines]].map(([k, get]) => [k, { from: get(first.metrics) ?? null, to: get(now) ?? null }])),
     git: { before: prior, after }
   }
 }
