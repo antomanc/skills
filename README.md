@@ -31,9 +31,13 @@ User-level, so every project sees it without committing anything:
 
 ```sh
 npx skills add antomanc/skills --skill wellkept --global
-# or, from a clone, with every skill in this repo:
+# or, from a clone, install wellkept plus the shared engineering set:
 ./bootstrap.sh
 ```
+
+`bootstrap.sh` installs the Matt Pocock methodology, `humanizer`,
+`karpathy-guidelines`, `impeccable`, `agent-browser`, `agent-device` and every
+skill in `skills/`. It is idempotent: re-run it after editing a skill.
 
 ## Use it
 
