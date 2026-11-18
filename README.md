@@ -21,8 +21,18 @@ A sentence in a doc doesn't fix that. **A failing build does.** wellkept gives t
 
 ## Install
 
+Project-level:
+
 ```sh
 npx skills add antomanc/skills --skill wellkept
+```
+
+User-level, so every project sees it without committing anything:
+
+```sh
+npx skills add antomanc/skills --skill wellkept --global
+# or, from a clone, with every skill in this repo:
+./bootstrap.sh
 ```
 
 ## Use it
