@@ -2,10 +2,16 @@
   <img src="docs/hero.svg" alt="wellkept: simple rules that fail the build, so AI agents keep your code clean" width="100%">
 </p>
 
-<p align="center">
-  An agent skill for Claude Code, Codex, Cursor and any agent that reads <code>SKILL.md</code>.<br>
-  It finds the mistakes agents keep making in your repo and turns each one into a check that fails the build.
-</p>
+# wellkept
+
+An agent skill for Claude Code, Codex, Cursor and any agent that reads `SKILL.md`. It looks for the
+mistakes agents keep making in your repo and turns each one into a check that fails the build, with an
+error message that tells the next agent what to use instead.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Agent Skills](https://img.shields.io/badge/Agent%20Skills-SKILL.md-8A2BE2)](skills/wellkept/SKILL.md)
+
+[Why](#why) · [Install](#install) · [Use it](#use-it) · [How it works](#how-it-works) · [Does it work?](#does-it-work) · [FAQ](#faq)
 
 ---
 
@@ -35,7 +41,7 @@ npx skills add antomanc/skills --skill wellkept --global
 ./bootstrap.sh
 ```
 
-`bootstrap.sh` installs the Matt Pocock methodology, `humanizer`,
+`bootstrap.sh` is my personal setup, not part of wellkept: it installs the Matt Pocock methodology, `humanizer`,
 `karpathy-guidelines`, `impeccable`, `agent-browser`, `agent-device` and every
 skill in `skills/`. It is idempotent: re-run it after editing a skill.
 
@@ -78,7 +84,7 @@ Not doing: the setTimeout in scripts/retry.ts is a CLI backoff, fine there.
 
 It is a skill, so the agent does the work. There are no scripts to install and no service to run. Three ideas:
 
-1. **An alternative before a ban.** An agent blocked with no right way to go finds a wrong one. In our tests, banning timers without a timer helper made agents hide a polling loop somewhere else, and it leaked.
+1. **An alternative before a ban.** An agent blocked with no right way to go finds a wrong one. In my tests, banning timers without a timer helper made agents hide a polling loop somewhere else, and it leaked.
 2. **Deterministic checks only.** Types, compiler flags, your linter, your architecture tool, your tests. No LLM review as the gate: a check either fails or it doesn't.
 3. **Evidence before rules.** A check is proposed only when your repo shows the problem: many occurrences, the same fix landing twice, a rule that lives only in prose. A healthy repo gets a short plan, or none.
 
@@ -123,11 +129,11 @@ No state files, no extra tooling. Remove the skill and everything keeps working.
 
 ## Does it work?
 
-What we know, honestly:
+What I know so far, honestly:
 
 - **Real bugs, found by the audit.** On two real projects (a Kotlin/Compose app and a Svelte web app), the first run found a clock that never ticked on screen, an old error shown after a newer success, a leaked timer and stale test fixtures.
 - **Good guardrails are safe; bad ones aren't.** On a small React app over 5 agent tickets, guardrails with sanctioned helpers passed every hidden test in all 4 runs. A version that banned timers without a helper leaked a timer in both of its runs.
-- **Simple beats elaborate.** An earlier version also stored and re-proved every check over time. It cost 1.3 to 2.5 times the tokens and filled repos with bookkeeping commits, so it was cut.
+- **Simple beats elaborate.** An earlier version also stored and re-proved every check over time. It cost 1.3 to 2.5 times the tokens and filled repos with bookkeeping commits, so it was cut. The eval cases I use are in [skills/wellkept/evals](skills/wellkept/evals).
 
 Not shown yet: that a repo with wellkept stays cleaner than one without over months of agent work. If you try it, issues with before/after examples are very welcome.
 
